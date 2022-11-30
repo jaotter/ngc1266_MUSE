@@ -92,42 +92,53 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 				save_dict['[NII]6548_ANR'] = []
 
 	# Setting up wavelength for creating gas templates
-	lamRange_full = np.array([wave_lam[0], wave_lam[-1]])
-	velscale_init = c * np.diff(np.log(wave_lam[[0, -1]]))/(wave_lam.size - 1)
-	lam_range_gal = lamRange_full/(1 + z)
-	#dlam1 = lamRange_full[0]/2000.
-	#dlam2 = lamRange_full[1]/4000.
-	#FWHM_inst = np.mean([dlam1, dlam2])
-	#FWHM_gal = FWHM_inst/(1 + (galv/c))
-	FWHM_gal = 2.51/(1 + z)
+	#velscale_init = c * np.diff(np.log(wave_lam[[0, -1]]))/(wave_lam.size - 1)
+	FWHM_gal = 2.51#/(1 + z)
 	
 	#voronoi bin file
 	x,y,binNum = np.loadtxt(vorbin_path).T
 	x,y,binNum = x.astype(int), y.astype(int), binNum.astype(int)
 
 	#preparing stellar templates
-	code_dir = "/Users/jotter/highres_PSBs/ppxf/MILES_BASTI_CH_baseFe/" # directory where stellar templates are located
+	miles_lamrange = [3525,7500] #Angstroms, from documentation
+	wave_lam_rest = wave_lam/(1+z)
+	cube_fit_ind = np.where((wave_lam_rest > miles_lamrange[0]) & (wave_lam_rest < miles_lamrange[1]))[0] #only fit area covered by templates
+
+	cube_trunc = cube[cube_fit_ind,:,:]
+	error_cube_trunc = error_cube[cube_fit_ind,:,:]
+	wave_trunc_rest = wave_lam_rest[cube_fit_ind]
+	wave_trunc = wave_lam[cube_fit_ind]
+
+	wave_trunc_rest_range = wave_trunc_rest[[0,-1]]
+	wave_trunc_range = wave_trunc[[0,-1]]
+
+	example_spec = cube_trunc[:,150,150]
+	example_spec_rebin, log_wave_trunc_rest, velscale_trunc_rest = util.log_rebin(wave_trunc_rest_range, example_spec)
+
+	code_dir = "../../ppxf_files/MILES_BASTI_CH_baseFe/" # directory where stellar templates are located
 	pathname = os.path.join(code_dir, 'Mch1.30*.fits')
-	miles = lib.miles(pathname, velscale_init, FWHM_gal)	# The stellar templates are reshaped below into a 2-dim array with each
-	reg_dim = miles.templates.shape[1:]						# spectrum as a column, however we save the original array dimensions,
-                                                			# which are needed to specify the regularization dimensions.
+	miles = lib.miles(pathname, velscale_trunc_rest, FWHM_gal)							# The stellar templates are reshaped below into a 2-dim array with each	
+																						# spectrum as a column, however we save the original array dimensions,
+																						# which are needed to specify the regularization dimensions.
+	reg_dim = miles.templates.shape[1:]
 	stars_templates = miles.templates.reshape(miles.templates.shape[0], -1)
 	n_temps = stars_templates.shape[1]
 
 	lam_temp = miles.lam_temp
 	lamRange_temp = [lam_temp[0], lam_temp[-1]]
-	wave_lam_rest = wave_lam/(1+z)
-	max_lam_ind = np.where(wave_lam_rest > lam_temp[-1])[0][0]
-	wave_lam = wave_lam[:max_lam_ind]
-	lamRange = [wave_lam[0], wave_lam[-1]]
+	#max_lam_ind = np.where(wave_lam_rest > lam_temp[-1])[0][0]
+	#wave_lam_rest = wave_lam_rest[:max_lam_ind]
+	#wave_lam = wave_lam[:max_lam_ind]
+	#lamRange = [wave_lam[0], wave_lam[-1]]
+	#lamRange_rest = [wave_lam_rest[0], wave_lam_rest[-1]]
 
-	maskreg = (5890,5950) #skyline in this window
+	maskreg = (5890,5950) #skyline and NaD in this window, observed wavelength
 	reg1 = np.where(wave_lam < maskreg[0])
 	reg2 = np.where(wave_lam > maskreg[1])
 	good_pixels = np.concatenate((reg1, reg2), axis=1)
 
 	if fit_gas == True:
-		gas_templates, gas_names, line_wave = util.emission_lines(miles.ln_lam_temp, lam_range_gal, FWHM_gal, 
+		gas_templates, gas_names, line_wave = util.emission_lines(miles.ln_lam_temp, wave_trunc_rest_range, FWHM_gal, 
 																tie_balmer=tie_balmer, limit_doublets=limit_doublets)
 
 		# Combines the stellar and gaseous templates into a single array.
@@ -151,9 +162,11 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 
 
 	#velocity difference between templates and data
-	dv = c*(np.log(miles.lam_temp[0]/wave_lam[0])) # eq.(8) of Cappellari (2017)
+	dv = c*(np.log(miles.lam_temp[0]/wave_trunc_rest[0])) # eq.(8) of Cappellari (2017)
 
-	for bn in np.unique(binNum):
+	print(dv)
+
+	for bn in [0]:#np.unique(binNum):
 		if bn >= 0: #skip nan bins with binNum == -1
 			print('\n============================================================================')
 			print('binNum: {}'.format(bn))
@@ -162,8 +175,8 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 			x_loc = x[b_loc]
 			y_loc = y[b_loc]
 
-			spectra = cube[:max_lam_ind,y_loc,x_loc]
-			err_spectra = error_cube[:max_lam_ind,y_loc,x_loc]
+			spectra = cube_trunc[:,y_loc,x_loc]
+			err_spectra = error_cube_trunc[:,y_loc,x_loc]
 
 			n_spec = spectra.shape[1] #don't need n_spec to run ppxf
 			print('n_spec in bin: ', n_spec)
@@ -212,41 +225,46 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 			noise_lin = np.sqrt(np.nansum(err_spectra**2, axis=1))
 			noise_lin[np.isinf(noise_lin)]=1./10
 
-			galaxy, logLam, velscale = util.log_rebin(lamRange, gal_lin)
+			galaxy, logLam_rest, velscale = util.log_rebin(wave_trunc_rest_range, gal_lin)
+			galaxy2, logLam, velscale2 = util.log_rebin(wave_trunc_range, gal_lin)
+
 			#log_noise, logLam_noise, velscale_noise = util.log_rebin(lamRange, noise_lin) 
 
-			nonan_ind = np.where(np.isnan(galaxy)==False)
-			good_ind = np.repeat(False, len(galaxy))
-			good_ind[good_pixels] = True
+			#nonan_ind = np.where(np.isnan(galaxy)==False)
+			#good_ind = np.repeat(False, len(galaxy))
+			#good_ind[good_pixels] = True
 
-			galaxy_nonan = galaxy[nonan_ind]
-			#log_noise_nonan = log_noise[nonan_ind]
-			noise_lin_nonan = noise_lin[nonan_ind]
-			good_ind_nonan = good_ind[nonan_ind]
-			wave_lam_nonan = wave_lam[nonan_ind]
-
-			good_pixels_nonan = np.where(good_ind_nonan == True)[0]
+			#galaxy_nonan = galaxy[nonan_ind]
+			#noise_lin_nonan = noise_lin[nonan_ind]
+			#good_ind_nonan = good_ind[nonan_ind]
+			#wave_lam_rest_nonan = wave_lam_rest[nonan_ind]
+			#wave_lam_nonan = wave_lam[nonan_ind]
+			#good_pixels_nonan = np.where(good_ind_nonan == True)[0]
 
 			if fit_gas == False:
-				goodpix_util = util.determine_goodpixels(logLam, lamRange, z)
-				good_pix_total = np.intersect1d(goodpix_util, good_pixels_nonan)
+				goodpix_util = util.determine_goodpixels(logLam, lamRange_temp, z)
+				#good_pix_total = np.intersect1d(goodpix_util, good_pixels_nonan)
+				good_pix_total = goodpix_util
 
-			else:
-				good_pix_total = good_pixels_nonan
+			#else:
+			#	good_pix_total = good_pixels_nonan
 
-			alt_velscale = c * np.diff(np.log(wave_lam[[0, -1]]))/(wave_lam.size - 1)
+			alt_velscale = c * np.diff(np.log(logLam[[0, -1]]))/(logLam.size - 1)
+			alt_velscale2 = c * np.diff(logLam[:2])
+
+			print(alt_velscale, alt_velscale2, velscale_trunc_rest, velscale)
+
 
 			#CALLING PPXF HERE!
 			t = clock()
-
-			pp = ppxf(templates, galaxy_nonan, noise_lin_nonan, alt_velscale, start,
-						plot=False, moments=moments, degree= adegree, mdegree= mdegree, vsyst=dv,
-						clean=False, regul= 1/0.1 , reg_dim=reg_dim, lam=wave_lam_nonan, #lam_temp=lam_temp,
+			pp = ppxf(templates, galaxy, noise_lin, velscale_trunc_rest, start,
+						plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
+						clean=False, #regul= 1/0.1 , reg_dim=reg_dim, #lam=wave_lam_rest, lam_temp=lam_temp,
 						component=component, gas_component=gas_component,
 						gas_names=gas_names, goodpixels = good_pix_total)
 
 			bestfit = pp.bestﬁt
-			residuals = galaxy_nonan - bestfit
+			residuals = galaxy - bestfit
 
 			param0 = pp.sol
 			error = pp.error
@@ -301,34 +319,33 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 				save_dict['comp2_sig'].append(np.round(sig_comp2))
 				save_dict['comp2_sig_error'].append(np.round(sig_error_comp1, decimals=10))
 
-				rest_gas = np.exp(logLam)/(z+1)
 				for idx, ggas in enumerate(gas_names):
 					gas_dict[ggas+'_flux'].append(param1[idx])
 					gas_dict[ggas+'_flux_error'].append(param2[idx])
 					if ggas == 'Hbeta':
 						emline = Hb
-						ANR(save_dict, ggas, emline, rest_gas, gas_bestfit, mad_std_residuals)
+						ANR(save_dict, ggas, emline, wave_lam_rest, gas_bestfit, mad_std_residuals)
 					if ggas == 'Halpha':
 						emline = Ha
-						ANR(save_dict, ggas, emline, rest_gas, gas_bestfit, mad_std_residuals)
+						ANR(save_dict, ggas, emline, wave_lam_rest, gas_bestfit, mad_std_residuals)
 						print('A/rN of Halpha: '+str(save_dict['Halpha_ANR'][-1]))
 					if ggas == '[SII]6731_d1':
 						emline = SII1
-						ANR(save_dict, ggas, emline, rest_gas, gas_bestfit, mad_std_residuals)
+						ANR(save_dict, ggas, emline, wave_lam_rest, gas_bestfit, mad_std_residuals)
 					if ggas == '[SII]6731_d2':
 						emline = SII2
-						ANR(save_dict, ggas, emline, rest_gas, gas_bestfit, mad_std_residuals)
+						ANR(save_dict, ggas, emline, wave_lam_rest, gas_bestfit, mad_std_residuals)
 					if ggas == '[OIII]5007_d':
 						emline = OIII
-						ANR(save_dict, ggas, emline, rest_gas, gas_bestfit, mad_std_residuals)
+						ANR(save_dict, ggas, emline, wave_lam_rest, gas_bestfit, mad_std_residuals)
 					if ggas == '[OI]6300_d':
 						emline = OI
-						ANR(save_dict, ggas, emline, rest_gas, gas_bestfit, mad_std_residuals)
+						ANR(save_dict, ggas, emline, wave_lam_rest, gas_bestfit, mad_std_residuals)
 					if ggas == '[NII]6583_d':
 						emline = NII
-						ANR(save_dict, ggas, emline, rest_gas, gas_bestfit, mad_std_residuals)
+						ANR(save_dict, ggas, emline, wave_lam_rest, gas_bestfit, mad_std_residuals)
 						emline2 = NII1
-						ANR(save_dict, '[NII]6548', emline2, rest_gas, gas_bestfit, mad_std_residuals) 
+						ANR(save_dict, '[NII]6548', emline2, wave_lam_rest, gas_bestfit, mad_std_residuals) 
 
 
 			print('============================================================================')
@@ -340,7 +357,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 
 			if plot_every > 0 and bn % plot_every == 0:
 				print(f'Saving ppxf plot for bin number {bn}')
-				plot_dir = '/Users/jotter/highres_PSBs/ngc1266/ppxf_output/plots/'
+				plot_dir = 'ppxf_output/plots/'
 
 				fig, ax = plt.subplots(figsize = (9,6), sharey = True)
 				ax1 = plt.subplot(212)
@@ -350,17 +367,15 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 				ax3 = plt.subplot(222)
 				ax3.margins(0.05)
 
-				rest_lam = np.exp(logLam)/(z+1)
-
-				rest_lam_ind = np.arange(len(rest_lam))
-				masked_ind = np.setdiff1d(rest_lam_ind, good_pix_total)
+				wave_lam_rest_ind = np.arange(len(wave_trunc_rest))
+				masked_ind = np.setdiff1d(wave_lam_rest_ind, good_pix_total)
 				mask_reg_upper = []
 				mask_reg_lower = []
 				for ind in masked_ind:
 					if ind+1 not in masked_ind:
-						mask_reg_lower.append(rest_lam[ind])
+						mask_reg_lower.append(wave_trunc_rest[ind])
 					elif ind-1 not in masked_ind:
-						mask_reg_upper.append(rest_lam[ind])
+						mask_reg_upper.append(wave_trunc_rest[ind])
 
 				residuals[masked_ind] = np.nan
 
@@ -370,54 +385,59 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 					ax3.axvspan(mask_reg_lower[bound_ind], mask_reg_upper[bound_ind], alpha=0.25, color='gray')
 
 				if fit_gas == True:
-					ax1.plot(rest_lam,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
-					ax1.plot(rest_lam,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
-					ax1.plot(rest_lam,gas_bestfit,'b', lw =1.5, label = 'Gas Best Fit')
-					ax1.plot(rest_lam,stellar_fit, 'darkorange', lw = 1.5, label = 'Stellar Fit')
-					ax1.plot(rest_lam,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
-
+					ax1.plot(wave_trunc_rest,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
+					ax1.plot(wave_trunc_rest,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
+					ax1.plot(wave_trunc_rest,gas_bestfit,'b', lw =1.5, label = 'Gas Best Fit')
+					ax1.plot(wave_trunc_rest,stellar_fit, 'darkorange', lw = 1.5, label = 'Stellar Fit')
+					ax1.plot(wave_trunc_rest,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax1.axhline(0, color='k')
 					ax1.set_xlabel('Restframe Wavelength (Å)',fontsize = 12)
 					ax1.set_ylabel('Flux', fontsize = 12)
 					ax1.legend(frameon = False, loc = 'upper left', fontsize = 'medium', ncol = 2 )
 					ax1.set_title('Bin Number: '+str(bn)+' Number of Spectra in Bin: '+str(n_spec), fontsize = 12)
 
-					ax2.plot(rest_lam,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
-					ax2.plot(rest_lam,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
-					ax2.plot(rest_lam,gas_bestfit,'b', lw =1.5, label = 'Gas Best Fit')
-					ax2.plot(rest_lam,stellar_fit, 'darkorange', lw = 1.5, label = 'Stellar Fit')
-					ax2.plot(rest_lam,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax2.plot(wave_trunc_rest,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
+					ax2.plot(wave_trunc_rest,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
+					ax2.plot(wave_trunc_rest,gas_bestfit,'b', lw =1.5, label = 'Gas Best Fit')
+					ax2.plot(wave_trunc_rest,stellar_fit, 'darkorange', lw = 1.5, label = 'Stellar Fit')
+					ax2.plot(wave_trunc_rest,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax2.axhline(0, color='k')
 					ax2.set_ylabel('Flux', fontsize = 12)
 					ax2.set_title(r'Zoom-in on H$\beta$', fontsize = 12)
 					ax2.set_xlim(Hb-50,Hb+50)
 
-					ax3.plot(rest_lam,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
-					ax3.plot(rest_lam,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
-					ax3.plot(rest_lam,gas_bestfit,'b', lw =1.5, label = 'Gas Best Fit')
-					ax3.plot(rest_lam,stellar_fit, 'darkorange', lw = 1.5, label = 'Stellar Fit')
-					ax3.plot(rest_lam,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax3.plot(wave_trunc_rest,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
+					ax3.plot(wave_trunc_rest,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
+					ax3.plot(wave_trunc_rest,gas_bestfit,'b', lw =1.5, label = 'Gas Best Fit')
+					ax3.plot(wave_trunc_rest,stellar_fit, 'darkorange', lw = 1.5, label = 'Stellar Fit')
+					ax3.plot(wave_trunc_rest,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax3.axhline(0, color='k')
 					ax3.set_title(r'Zoom-in on H$\alpha$ and [NII]', fontsize = 12)
 					ax3.set_yticklabels([])
 					ax3.set_xlim(Ha-50,Ha+50)
 
 				else:
-					ax1.plot(rest_lam,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
-					ax1.plot(rest_lam,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
-					ax1.plot(rest_lam,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax1.plot(wave_trunc_rest,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
+					ax1.plot(wave_trunc_rest,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
+					ax1.plot(wave_trunc_rest,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax1.axhline(0, color='k')
 					ax1.set_xlabel('Restframe Wavelength (Å)',fontsize = 12)
 					ax1.set_ylabel('Flux', fontsize = 12)
 					ax1.legend(frameon = False, loc = 'upper left', fontsize = 'medium', ncol = 2 )
 					ax1.set_title('Bin Number: '+str(bn)+' Number of Spectra in Bin: '+str(n_spec), fontsize = 12)
 
-					ax2.plot(rest_lam,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
-					ax2.plot(rest_lam,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
-					ax2.plot(rest_lam,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax2.plot(wave_trunc_rest,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
+					ax2.plot(wave_trunc_rest,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
+					ax2.plot(wave_trunc_rest,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax2.axhline(0, color='k')
 					ax2.set_ylabel('Flux', fontsize = 12)
 					#ax2.set_title(r'Zoom-in on H$\beta$', fontsize = 12)
-					ax2.set_xlim(5000,6000)
+					ax2.set_xlim(5800,6000)
 
-					ax3.plot(rest_lam,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
-					ax3.plot(rest_lam,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
-					ax3.plot(rest_lam,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax3.plot(wave_trunc_rest,galaxy, c = 'k', linewidth = 2, label = 'MUSE', alpha = 0.25, zorder = 0)
+					ax3.plot(wave_trunc_rest,bestfit, 'red', lw = 1.8, label = 'pPXF Best Fit')
+					ax3.plot(wave_trunc_rest,residuals, 'gD', ms = 1.,label = 'Residuals', alpha = 0.5)
+					ax3.axhline(0, color='k')
 					#ax3.set_title(r'Zoom-in on H$\alpha$ and [NII]', fontsize = 12)
 					ax3.set_yticklabels([])
 					ax3.set_xlim(6000,7000)
@@ -437,19 +457,21 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 				plot_fl_def = f'{full_plot_dir}/ppxf_{"stellar" if fit_gas == False else "gas"}fit_bin{bn}_defaultplot.png'
 				plt.savefig(plot_fl_def, dpi=300)
 
+				plt.close()
+
 
 	return save_dict
 
 
 def run_stellar_fit(runID, cube_path, vorbin_path, fit_gas = False, prev_fit_path=None, plot_every=0):
-	#run stellar and gas fit, only saving stellar fit info
+	#run stellar fit, optionally also fit gas or mask it out
 	#runID - name identifier for the run (e.g. Nov25_1comp)
 	#cube_path - path to data cube
 	#vorbin_path - path to voronoi bin text file
 	#fit_gas - if True, fit gas emission lines simultaneously with stellar continuum
 	#prev_fit_path - if supplied, uses S/N estimate from previous stellar fit
 
-	gal_out_dir = '/Users/jotter/highres_PSBs/ngc1266/ppxf_output/'
+	gal_out_dir = 'ppxf_output/'
 
 	# Reading in the cube
 	hdu = fits.open(cube_path)
@@ -502,10 +524,14 @@ def run_stellar_fit(runID, cube_path, vorbin_path, fit_gas = False, prev_fit_pat
 
 
 
-def run_gas_fit(runID, cube_path, vorbin_path, prev_fit_path):
-	#run gas fit, holding stellar kinematics constant and saving gas fits
+def run_gas_fit(runID, cube_path, vorbin_path, prev_fit_path, plot_every=0):
+	#run stellar and gas fit
+	#runID - name identifier for the run (e.g. Nov25_1comp)
+	#cube_path - path to data cube
+	#vorbin_path - path to voronoi bin text file
+	#prev_fit_path - location of stellar fit for stellar kinematics
 	
-	gal_out_dir = '/Users/jotter/highres_PSBs/ngc1266/ppxf_output/'
+	gal_out_dir = 'ppxf_output/'
 
 	# Reading in the cube
 	hdu = fits.open(cube_path)
@@ -545,7 +571,9 @@ def run_gas_fit(runID, cube_path, vorbin_path, prev_fit_path):
 	print(f'Saved ppxf fit csv to {csv_save_name}')
 
 
+cube_path = "../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
+vorbin_path = "ppxf_output/NGC1266_voronoi_output_targetSN_10_2022Oct18.txt"
+run_id = 'Nov_1comp'
 
-cube_path = "/Users/jotter/highres_PSBs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
-vorbin_path = "/Users/jotter/highres_PSBs/ngc1266/muse_data/MAP_interactive/outputs/NGC1266/NGC1266_voronoi_output_targetSN_10_2022Oct18.txt"
-run_stellar_fit('Nov_1comp_first', cube_path, vorbin_path, fit_gas=False, prev_fit_path=None, plot_every=100)
+
+run_stellar_fit(run_id, cube_path, vorbin_path, fit_gas=False, prev_fit_path=None, plot_every=100)
