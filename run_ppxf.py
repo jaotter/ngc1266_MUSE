@@ -13,16 +13,9 @@ import matplotlib.pyplot as plt
 from astropy.stats import mad_std 
 import pandas as pd
 
-c = 299792.458
-
-#Select galaxy to analyze------------------------------------------------------
-gal_name = 'NGC1266'   #YOUR INPUT (e.g. "FRB180924") 
-target_sn = 10  #YOUR INPUT, the target S/N used for voronoi binning
-
-z = 0.007214         # YOUR INPUT, redshift of galaxy, from SIMBAD
-galv = np.log(z+1)*c # estimate of galaxy's velocity
-
 #Constants, wavelength in Ang in vacuum------------------------------------------- 
+
+c = 299792.458
 
 Hb = 4862.721
 OIII = 5008.239
@@ -70,6 +63,10 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 	#prev_dict - if supplied, use previous fit info
 	#fit_gas - if True, fit gas emission lines, otherwise mask them and only do stellar continuum
 
+	#galaxy parameters
+	z = 0.007214         # NGC 1266 redshift, from SIMBAD
+	galv = np.log(z+1)*c # estimate of galaxy's velocity
+
 	save_dict = {'bin_num':[], 'star_vel':[], 'star_vel_error':[], 'star_sig':[], 'star_sig_error':[], 'SN_mad_STD':[]}
 
 	if fit_gas == True:
@@ -91,9 +88,8 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 				save_dict['[NII]6548_amplitude'] = []
 				save_dict['[NII]6548_ANR'] = []
 
-	# Setting up wavelength for creating gas templates
-	#velscale_init = c * np.diff(np.log(wave_lam[[0, -1]]))/(wave_lam.size - 1)
-	FWHM_gal = 2.51#/(1 + z)
+	# MUSE spectral resolution, in Angstroms
+	FWHM_gal = 2.51
 	
 	#voronoi bin file
 	x,y,binNum = np.loadtxt(vorbin_path).T
@@ -102,17 +98,20 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 	#preparing stellar templates
 	miles_lamrange = [3525,7500] #Angstroms, from documentation
 	wave_lam_rest = wave_lam/(1+z)
-	cube_fit_ind = np.where((wave_lam_rest > miles_lamrange[0]) & (wave_lam_rest < miles_lamrange[1]))[0] #only fit area covered by templates
+	cube_fit_ind = np.where((wave_lam_rest > miles_lamrange[0]) & (wave_lam_rest < miles_lamrange[1]))[0] #only fit rest-frame area covered by templates
 
+	#shorten all spectra to only be within fitting area
 	cube_trunc = cube[cube_fit_ind,:,:]
 	error_cube_trunc = error_cube[cube_fit_ind,:,:]
 	wave_trunc_rest = wave_lam_rest[cube_fit_ind]
 	wave_trunc = wave_lam[cube_fit_ind]
 
+	#wavelength ranges of rest-frame data
 	wave_trunc_rest_range = wave_trunc_rest[[0,-1]]
 	wave_trunc_range = wave_trunc[[0,-1]]
 
-	example_spec = cube_trunc[:,150,150]
+	#rebinning the wavelength to get the velscale
+	example_spec = cube_trunc[:,150,150] #only using this for log-rebinning
 	example_spec_rebin, log_wave_trunc_rest, velscale_trunc_rest = util.log_rebin(wave_trunc_rest_range, example_spec)
 
 	code_dir = "../../ppxf_files/MILES_BASTI_CH_baseFe/" # directory where stellar templates are located
@@ -126,15 +125,10 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 
 	lam_temp = miles.lam_temp
 	lamRange_temp = [lam_temp[0], lam_temp[-1]]
-	#max_lam_ind = np.where(wave_lam_rest > lam_temp[-1])[0][0]
-	#wave_lam_rest = wave_lam_rest[:max_lam_ind]
-	#wave_lam = wave_lam[:max_lam_ind]
-	#lamRange = [wave_lam[0], wave_lam[-1]]
-	#lamRange_rest = [wave_lam_rest[0], wave_lam_rest[-1]]
 
 	maskreg = (5890,5950) #skyline and NaD in this window, observed wavelength
-	reg1 = np.where(wave_lam < maskreg[0])
-	reg2 = np.where(wave_lam > maskreg[1])
+	reg1 = np.where(wave_trunc < maskreg[0])
+	reg2 = np.where(wave_trunc > maskreg[1])
 	good_pixels = np.concatenate((reg1, reg2), axis=1)
 
 	if fit_gas == True:
@@ -160,11 +154,9 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 		gas_names = None
 		component = 0
 
-
-	#velocity difference between templates and data
+	#velocity difference between templates and data, templates start around 3500 and data starts closer to 4500
 	dv = c*(np.log(miles.lam_temp[0]/wave_trunc_rest[0])) # eq.(8) of Cappellari (2017)
 
-	print(dv)
 
 	for bn in [0]:#np.unique(binNum):
 		if bn >= 0: #skip nan bins with binNum == -1
@@ -194,7 +186,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 			else:
 				start = start_vals
 
-			### old version normalized spectra and took median
+			### Celia's version normalized spectra and took median
 			#Normalizing spectra to give a continuum of 1 using median
 			#median_spec_array = np.nanmedian(spectra, axis = (0)) 
 			#norm_data_median = spectra/median_spec_array[None,:]
@@ -222,7 +214,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 
 			### now - just sum spectra
 			gal_lin = np.nansum(spectra, axis=1)
-			noise_lin = np.sqrt(np.nansum(err_spectra**2, axis=1))
+			noise_lin = np.sqrt(np.nansum(err_spectra**2, axis=1)) #add error spectra in quadrature
 			noise_lin[np.isinf(noise_lin)]=1./10
 
 			galaxy, logLam_rest, velscale = util.log_rebin(wave_trunc_rest_range, gal_lin)
@@ -230,6 +222,8 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 
 			#log_noise, logLam_noise, velscale_noise = util.log_rebin(lamRange, noise_lin) 
 
+
+			##this code here is for removing nans from spectra, might need later
 			#nonan_ind = np.where(np.isnan(galaxy)==False)
 			#good_ind = np.repeat(False, len(galaxy))
 			#good_ind[good_pixels] = True
@@ -242,22 +236,14 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 			#good_pixels_nonan = np.where(good_ind_nonan == True)[0]
 
 			if fit_gas == False:
-				goodpix_util = util.determine_goodpixels(logLam, lamRange_temp, z)
-				#good_pix_total = np.intersect1d(goodpix_util, good_pixels_nonan)
-				good_pix_total = goodpix_util
+				goodpix_util = util.determine_goodpixels(logLam, lamRange_temp, z) #uses z to get redshifted line wavelengths, so logLam should be observer frame
+				good_pix_total = np.intersect1d(goodpix_util, good_pixels)
 
-			#else:
-			#	good_pix_total = good_pixels_nonan
-
-			alt_velscale = c * np.diff(np.log(logLam[[0, -1]]))/(logLam.size - 1)
-			alt_velscale2 = c * np.diff(logLam[:2])
-
-			print(alt_velscale, alt_velscale2, velscale_trunc_rest, velscale)
-
+			#noise_lin = np.ones(len(galaxy))
 
 			#CALLING PPXF HERE!
 			t = clock()
-			pp = ppxf(templates, galaxy, noise_lin, velscale_trunc_rest, start,
+			pp = ppxf(templates, galaxy, noise_lin, velscale, start,
 						plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
 						clean=False, #regul= 1/0.1 , reg_dim=reg_dim, #lam=wave_lam_rest, lam_temp=lam_temp,
 						component=component, gas_component=gas_component,
@@ -478,10 +464,6 @@ def run_stellar_fit(runID, cube_path, vorbin_path, fit_gas = False, prev_fit_pat
 	cube = hdu[1].data
 	error_cube = hdu[2].data
 	h1 = hdu[1].header
-
-	#galaxy parameters
-	z = 0.007214         # NGC 1266 redshift, from SIMBAD
-	galv = np.log(z+1)*c # estimate of galaxy's velocity
 
 	#ppxf parameters
 	if fit_gas == False:
