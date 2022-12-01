@@ -158,7 +158,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 	dv = c*(np.log(miles.lam_temp[0]/wave_trunc_rest[0])) # eq.(8) of Cappellari (2017)
 
 
-	for bn in [0]:#np.unique(binNum):
+	for bn in [0]:#np.unique(binNum): #only looking at bin=0 for testing
 		if bn >= 0: #skip nan bins with binNum == -1
 			print('\n============================================================================')
 			print('binNum: {}'.format(bn))
@@ -217,8 +217,8 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 			noise_lin = np.sqrt(np.nansum(err_spectra**2, axis=1)) #add error spectra in quadrature
 			noise_lin[np.isinf(noise_lin)]=1./10
 
-			galaxy, logLam_rest, velscale = util.log_rebin(wave_trunc_rest_range, gal_lin)
-			galaxy2, logLam, velscale2 = util.log_rebin(wave_trunc_range, gal_lin)
+			galaxy, logLam, velscale = util.log_rebin(wave_trunc_range, gal_lin)
+			#galaxy2, logLam_rest, velscale2 = util.log_rebin(wave_trunc_rest_range, gal_lin)
 
 			#log_noise, logLam_noise, velscale_noise = util.log_rebin(lamRange, noise_lin) 
 
