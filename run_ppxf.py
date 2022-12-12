@@ -35,7 +35,7 @@ OII1 = 7322.0
 OII2 = 7332.75
 
 
-def ANR(gas_dict, gas_name, emline, gal_lam, gas_bestfit, mad_std_residuals,velocity):
+def ANR(gas_dict, gas_name, emline, gal_lam, gas_bestfit, mad_std_residuals, velocity):
 #    '''
 #    Function caluclates the amplitude and amplitude-to-residual (A/rN) of specific emission-line feature following Sarzi+2006. No returns,
 #    the function simply stores the amplitude and A/rN in the dictionary called gas_dict
@@ -58,7 +58,8 @@ def ANR(gas_dict, gas_name, emline, gal_lam, gas_bestfit, mad_std_residuals,velo
 	gas_dict[gas_name+'_amplitude'].append(emline_amp)
 	gas_dict[gas_name+'_ANR'].append(emline_ANR)
 
-def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam, limit_doublets=True, tie_balmer=False, plot_every=0, plot_name=None, prev_fit_path=None, fit_gas=True, ngas_comp=1):
+def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam, limit_doublets=True, tie_balmer=False, plot_every=0,
+				plot_name=None, prev_fit_path=None, fit_gas=True, ngas_comp=1, globsearch=False, single_gascomp=False):
 	#cube - unbinned data cube
 	#error_cube - unbinned error cube
 	#vorbin_path - path to voronoi bin file
@@ -73,6 +74,8 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 	#prev_fit_path - if supplied, use previous fit info
 	#fit_gas - if True, fit gas emission lines, otherwise mask them and only do stellar continuum
 	#ngas_comp - number of kinematic components to fit gas with
+	#globsearch - bool - choose to set this during ppxf, True is important for complex multi-component, but slow 
+	#single_gascomp - bool - if True, only use 1 component for all gas lines and do NOT split balmer/forbidden lines
 
 	#galaxy parameters
 	z = 0.007214         # NGC 1266 redshift, from SIMBAD
@@ -127,33 +130,52 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 		gas_templates, gas_names, line_wave = custom_util.emission_lines(miles.ln_lam_temp, wave_trunc_range, FWHM_gal, 
 																tie_balmer=tie_balmer, limit_doublets=limit_doublets)
 
+		n_gas = len(gas_names)
 		n_balmer = 2
-		n_other = len(gas_names) - n_balmer  # forbidden lines contain "[*]"
+		n_other = n_gas - n_balmer  # forbidden lines contain "[*]"
 		
 		gas_templates_tile = np.tile(gas_templates, ngas_comp)
 		gas_names = np.asarray([a + f"_({p+1})" for p in range(ngas_comp) for a in gas_names])
 		line_wave = np.tile(line_wave, ngas_comp)
 
-		# Assign component=0 to the stellar templates, component=1 to the Balmer
-		# gas emission lines templates and component=2 to the other lines.
-		if ngas_comp == 1:
-			component = [0] + [1]*n_balmer + [2]*n_other
-		if ngas_comp == 2:
-			component = [0] + [1]*n_balmer + [3]*n_other + [2]*n_balmer + [4]*n_other
-		if ngas_comp == 3:
-			component = [0]+ [1]*n_balmer + [4]*n_other + [2]*n_balmer + [5]*n_other + [3]*n_balmer + [6]*n_other
+		if single_gascomp == False:
+			# Assign component=0 to the stellar templates, component=1 to the Balmer
+			# gas emission lines templates and component=2 to the other lines.
+			if ngas_comp == 1:
+				component = [0] + [1]*n_balmer + [2]*n_other
+			if ngas_comp == 2:
+				component = [0] + [1]*n_balmer + [2]*n_other + [3]*n_balmer + [4]*n_other
+			if ngas_comp == 3:
+				component = [0]+ [1]*n_balmer + [2]*n_other + [3]*n_balmer + [4]*n_other + [5]*n_balmer + [6]*n_other
+		
+			for num in range(1, ngas_comp+1):
+				save_dict[f'balmer_({num})_vel'] = []
+				save_dict[f'balmer_({num})_vel_error'] = []
+				save_dict[f'balmer_({num})_sig'] = []
+				save_dict[f'balmer_({num})_sig_error'] = []
+				save_dict[f'forbidden_({num})_vel'] = []
+				save_dict[f'forbidden_({num})_vel_error'] = []
+				save_dict[f'forbidden_({num})_sig'] = []
+				save_dict[f'forbidden_({num})_sig_error'] = []
+
+		elif single_gascomp == True:
+			# Assign component=0 to the stellar templates, component=1 to gas
+			if ngas_comp == 1:
+				component = [0] + [1]*n_gas
+			if ngas_comp == 2:
+				component = [0] + [1]*n_gas + [2]*n_gas
+			if ngas_comp == 3:
+				component = [0]+ [1]*n_gas + [2]*n_gas + [3]*n_gas 
+		
+			for num in range(1, ngas_comp+1):
+				save_dict[f'gas_({num})_vel'] = []
+				save_dict[f'gas_({num})_vel_error'] = []
+				save_dict[f'gas_({num})_sig'] = []
+				save_dict[f'gas_({num})_sig_error'] = []
+
 
 		gas_component = np.array(component) > 0  # gas_component=True for gas 
 
-		for num in range(ngas_comp):
-			save_dict[f'balmer_({num})_vel'] = []
-			save_dict[f'balmer_({num})_vel_error'] = []
-			save_dict[f'balmer_({num})_sig'] = []
-			save_dict[f'balmer_({num})_sig_error'] = []
-			save_dict[f'forbidden_({num})_vel'] = []
-			save_dict[f'forbidden_({num})_vel_error'] = []
-			save_dict[f'forbidden_({num})_sig'] = []
-			save_dict[f'forbidden_({num})_sig_error'] = []
 
 		for ggas in gas_names:
 			ncomp_num = ggas[-2]
@@ -184,7 +206,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 	#velocity difference between templates and data, templates start around 3500 and data starts closer to 4500
 	dv = c*(np.log(miles.lam_temp[0]/wave_trunc[0])) # eq.(8) of Cappellari (2017)
 
-	for bn in [0]:#np.unique(binNum): #only looking at bin=0 for testing
+	for bn in np.unique(binNum): #only looking at bin=0 for testing
 		if bn >= 0: #skip nan bins with binNum == -1
 			print('\n============================================================================')
 			print('binNum: {}'.format(bn))
@@ -206,11 +228,53 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 			if fit_gas == True:
 				#if previous fit data supplied, use previous starting values
 				bin_df = prev_dict.loc[prev_dict['bin_num'] == bn]
-				start_vals  = [bin_df['star_vel'][0], bin_df['star_sig'][0]]
+				star_vel = bin_df['star_vel'].values[0]
+				star_sig = bin_df['star_sig'].values[0]
 
-				start = np.tile(np.array(start_vals), (ngas_comp*2+1, 1))
+				start_vals  = [star_vel, star_sig]
+				start_vals_ncomp = [star_vel, star_sig*2] #for higher components, start with 2*stellar sigma width
 
+				start = np.concatenate((np.tile(start_vals, (3,1)), np.tile(start_vals_ncomp, ((ngas_comp-1)*2, 1)))) #first 3 are stellar and first gas, then add extra
+
+				if single_gascomp == True:
+					start = np.concatenate((np.tile(start_vals, (2,1)), np.tile(start_vals_ncomp, ((ngas_comp-1), 1)))) #first 2 are stellar and first gas, then add extra
+
+
+				# setting bounds
+				if ngas_comp == 1:
+					bounds = None
+				if ngas_comp > 1:
+					gas_bounds = [[star_vel-300, star_vel+300], [20, 1000]]
+					bounds = [gas_bounds]
+					for n in range(ngas_comp):
+						bounds.append(gas_bounds)
+						if single_gascomp == False: #if splitting balmer, then need to add another set of bounds
+							bounds.append(gas_bounds)
+
+
+				# kinematic constraints
+				if ngas_comp == 2: #constraint to ensure the first component is more narrow than the second for balmer and non-balmer lines
+					#moments will be: [-2, 2, 2, 2, 2]
+					#start will be: [[vstar, vsigma], [v1_1, sigma1_1], [v2_1, sigma2_1], [v1_2, sigma1_2], [v2_2, sigma2_2]]
+					#we want sigma1_2 > sigma1_1 AND sigma2_2 > sigma_2_1
+					A_ineq = [[0,0, 0,1, 0,0, 0,-1, 0,0],  #sigma1_1 - sigma1_2 <= 0
+							  [0,0, 0,0, 0,1, 0,0,  0,-1]] #sigma2_1 - sigma2_2 <= 0
+					b_ineq = [1e-5, 1e-5]
+
+					if single_gascomp == True:
+						#moments will be: [-2, 2, 2]
+						#start will be: [[vstar, vsigma], [v1, sigma1], [v2, sigma2]]
+						#we want sigma1_2 > sigma1_1 AND sigma2_2 > sigma_2_1
+						A_ineq = [[0,0, 0,1, 0,-1]]  #sigma1 - sigma2 <= 0
+						b_ineq = [1e-5]
+
+					constr_kinem = {"A_ineq":A_ineq, "b_ineq":b_ineq}
+				else:
+					constr_kinem = None
+
+				
 				#use previous fit path to locate previous optimal templates file
+
 
 				opt_temp = prev_temps[:,bn]
 
@@ -222,6 +286,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 			else:
 				start_vals = [galv, 25]
 				start = start_vals
+				bounds = None
 
 			templates /= np.median(templates)
 
@@ -253,9 +318,9 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 			t = clock()
 			pp = ppxf(templates, galaxy, noise_lin, velscale, start,
 						plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
-						clean=False, lam=np.exp(logLam)/(1+z), #regul= 1/0.1 , reg_dim=reg_dim, #lam=wave_lam_rest, lam_temp=lam_temp,
-						component=component, gas_component=gas_component,
-						gas_names=gas_names, goodpixels = good_pix_total, global_search=True)
+						clean=False, lam=np.exp(logLam)/(1+z), #regul= 1/0.1 , reg_dim=reg_dim,
+						component=component, gas_component=gas_component, bounds=bounds, constr_kinem=constr_kinem,
+						gas_names=gas_names, goodpixels = good_pix_total, global_search=globsearch)
 
 			bestfit = pp.bestﬁt
 			residuals = galaxy - bestfit
@@ -297,26 +362,42 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 				param1 = pp.gas_flux
 				param2 = pp.gas_flux_error
 
-				for num in range(ngas_comp):
-					vel_comp1 = param0[num][0]
-					vel_error_comp1 = error[num][0]*np.sqrt(pp.chi2)
-					sig_comp1 = param0[num][1]
-					sig_error_comp1 = error[num][1]*np.sqrt(pp.chi2)
 
-					vel_comp2 = param0[num+1][0]
-					vel_error_comp2 = error[num+1][0]*np.sqrt(pp.chi2)
-					sig_comp2 = param0[num+1][1]
-					sig_error_comp2 = error[num+1][1]*np.sqrt(pp.chi2)
+				if single_gascomp == False:
+					for num in np.arange(1,ngas_comp+1):
 
-					save_dict[f'balmer_({num})_vel'].append(vel_comp1)
-					save_dict[f'balmer_({num})_vel_error'].append(vel_error_comp1)
-					save_dict[f'balmer_({num})_sig'].append(sig_comp1)
-					save_dict[f'balmer_({num})_sig_error'].append(sig_error_comp1)
+						ind = num*2 - 1
+						vel_comp1 = param0[ind][0]
+						vel_error_comp1 = error[ind][0]*np.sqrt(pp.chi2)
+						sig_comp1 = param0[ind][1]
+						sig_error_comp1 = error[ind][1]*np.sqrt(pp.chi2)
 
-					save_dict[f'forbidden_({num})_vel'].append(vel_comp2)
-					save_dict[f'forbidden_({num})_vel_error'].append(vel_error_comp1)
-					save_dict[f'forbidden_({num})_sig'].append(sig_comp2)
-					save_dict[f'forbidden_({num})_sig_error'].append(sig_error_comp1)
+						vel_comp2 = param0[ind+1][0]
+						vel_error_comp2 = error[ind+1][0]*np.sqrt(pp.chi2)
+						sig_comp2 = param0[ind+1][1]
+						sig_error_comp2 = error[ind+1][1]*np.sqrt(pp.chi2)
+
+						save_dict[f'balmer_({num})_vel'].append(vel_comp1)
+						save_dict[f'balmer_({num})_vel_error'].append(vel_error_comp1)
+						save_dict[f'balmer_({num})_sig'].append(sig_comp1)
+						save_dict[f'balmer_({num})_sig_error'].append(sig_error_comp1)
+
+						save_dict[f'forbidden_({num})_vel'].append(vel_comp2)
+						save_dict[f'forbidden_({num})_vel_error'].append(vel_error_comp1)
+						save_dict[f'forbidden_({num})_sig'].append(sig_comp2)
+						save_dict[f'forbidden_({num})_sig_error'].append(sig_error_comp1)
+
+				elif single_gascomp == True:
+					for num in range(1, ngas_comp+1):
+						vel_comp1 = param0[num][0]
+						vel_error_comp1 = error[num][0]*np.sqrt(pp.chi2)
+						sig_comp1 = param0[num][1]
+						sig_error_comp1 = error[num][1]*np.sqrt(pp.chi2)
+
+						save_dict[f'gas_({num})_vel'].append(vel_comp1)
+						save_dict[f'gas_({num})_vel_error'].append(vel_error_comp1)
+						save_dict[f'gas_({num})_sig'].append(sig_comp1)
+						save_dict[f'gas_({num})_sig_error'].append(sig_error_comp1)
 
 				wave_unexp = np.exp(logLam)
 
@@ -431,19 +512,19 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 
 					plt.sca(ax2)
 					pp.plot()
-					ax2.set_xlim(4700/1e4,5200/1e4)
+					ax2.set_xlim((Ha-50)/1e4,(Ha+50)/1e4)
 					xticks = ax2.get_xticks()
 					ax2.set_xticks(xticks, labels=np.array(xticks*1e4, dtype='int'))
 					ax2.set_ylabel('')
 					ax2.set_xlabel('')
-					#ax2.set_title(r'Zoom-in on H$\beta$', fontsize = 12)
+					ax2.set_title(r'Zoom-in on H$\alpha$ and [NII]', fontsize = 12)
 					
 					plt.sca(ax3)
 					pp.plot()
-					ax3.set_xlim((Ha-50)/1e4,(Ha+50)/1e4)
+					ax3.set_xlim((SII1-50)/1e4,(SII2+50)/1e4)
 					xticks = ax3.get_xticks()
 					ax3.set_xticks(xticks, labels=np.array(xticks*1e4, dtype='int'))
-					ax3.set_title(r'Zoom-in on H$\alpha$ and [NII]', fontsize = 12)
+					ax3.set_title(r'Zoom-in on [SII]', fontsize = 12)
 					ax3.set_yticklabels([])
 					ax3.set_xlabel('')
 					ax3.set_ylabel('')
@@ -555,8 +636,8 @@ def run_stellar_fit(runID, cube_path, vorbin_path, fit_gas = False, prev_fit_pat
 	print(f'Saved optimal templates to {opt_temps_save_path}')
 
 
-def run_gas_fit(runID, cube_path, vorbin_path, prev_fit_path, plot_every=0, ngas_comp=1):
-	#run stellar and gas fit
+def run_gas_fit(runID, cube_path, vorbin_path, prev_fit_path, plot_every=0, ngas_comp=1, globsearch=False, single_gascomp=False):
+	#run gas fit
 	#runID - name identifier for the run (e.g. Nov25_1comp)
 	#cube_path - path to data cube
 	#vorbin_path - path to voronoi bin text file
@@ -578,6 +659,11 @@ def run_gas_fit(runID, cube_path, vorbin_path, prev_fit_path, plot_every=0, ngas
 	moments = np.repeat(2, ngas_comp*2 + 1)
 	moments[0] = -2
 
+	if single_gascomp == True:
+		moments = np.repeat(2, ngas_comp + 1)
+		moments[0] = -2
+
+
 	adegree = -1       # Additive polynomial used to correct the template continuum shape during the fit.
                        		# Degree = 10 is the suggested order for stellar populations.
 	mdegree = 10     	# Multiplicative polynomial used to correct the template continuum shape during the fit.
@@ -591,8 +677,8 @@ def run_gas_fit(runID, cube_path, vorbin_path, prev_fit_path, plot_every=0, ngas
 	plot_name = f'gasfit_{runID}'
 	csv_save_name = f'{gal_out_dir}gasfit_{runID}.csv'
 
-	run_dict = ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam, limit_doublets, tie_balmer, plot_every=100,
-						plot_name=plot_name, fit_gas=True, prev_fit_path=prev_fit_path, ngas_comp=ngas_comp)
+	run_dict = ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam, limit_doublets, tie_balmer, plot_every=plot_every,
+						plot_name=plot_name, fit_gas=True, prev_fit_path=prev_fit_path, ngas_comp=ngas_comp, globsearch=globsearch, single_gascomp=single_gascomp)
 
 	run_dict_df = pd.DataFrame.from_dict(run_dict)
 	run_dict_df.to_csv(csv_save_name, index=False, header=True)
@@ -600,13 +686,14 @@ def run_gas_fit(runID, cube_path, vorbin_path, prev_fit_path, plot_every=0, ngas
 	print(f'Saved ppxf gas fit csv to {csv_save_name}')
 
 
+
 cube_path = "../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
 vorbin_path = "ppxf_output/NGC1266_voronoi_output_targetSN_10_2022Oct18.txt"
 run_id_stellar = 'Dec22'
-run_id_gas = 'Dec22_2comp_globsearch'
+run_id_gas = 'Dec22_2comp'
 
 #run_stellar_fit(run_id_stellar, cube_path, vorbin_path, fit_gas=False, prev_fit_path=None, plot_every=100)
-run_gas_fit(run_id_gas, cube_path, vorbin_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}.csv', plot_every=100, ngas_comp=2)
+run_gas_fit(run_id_gas, cube_path, vorbin_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}.csv', plot_every=50, ngas_comp=2, globsearch=False)
 
 
 
