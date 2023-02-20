@@ -54,7 +54,8 @@ def ANR(gas_dict, gas_name, emline, gal_lam, gas_bestfit, mad_std_residuals, vel
 
 	emline_obs = (velocity/c + 1) * emline
 	emline_loc = np.where((gal_lam>emline_obs-5)&(gal_lam<emline_obs+5))
-	emline_amp = np.max(gas_bestfit[emline_loc])
+
+	emline_amp = np.nanmax(gas_bestfit[emline_loc])
 	emline_ANR = emline_amp/mad_std_residuals 
 	if gas_dict is not None:
 		gas_dict[gas_name+'_amplitude'].append(emline_amp)
@@ -90,7 +91,7 @@ def output_ppxf_fit_plot(plot_name, pp, good_pix_total, logLam, vel_comp0, z, nc
 
 	fig.text(0.05, 0.97, f'Bin {bin_number}. Number of Spectra in Bin: {n_spec}', fontsize = 12)
 	fig.text(0.05, 0.93, f'Mean abs. dev. of residuals: {np.round(mad_std_residuals,1)}, S/N: {int(np.round(SN_wMadStandardDev,0))}')
-	fig.text(0.45, 0.93, f'Chi-Squared/DOF: {int(np.round(pp.chi2,-1))}')
+	fig.text(0.45, 0.93, f'Chi-Squared/DOF: {pp.chi2}')
 
 	bin_stell_vel = vel_comp0 - z*c
 	fig.text(0.7, 0.93, f'Bin stellar velocity: {int(np.round(bin_stell_vel,0))} km/s')
@@ -187,8 +188,18 @@ def output_ppxf_fit_plot(plot_name, pp, good_pix_total, logLam, vel_comp0, z, nc
 	print(f'Saved ppxf plot to {plot_name}')
 
 
-def residual_fit_test(plot_name, pp, residuals, bin_number, Halpha_ANR, logLam, z, ncomp, n_spec, saveplot=False):
-	residual_range = ((Ha-75),(Ha+75))
+def residual_fit_test(plot_name, pp, residuals, bin_number, ANR, logLam, z, ncomp, n_spec, line_region='Ha', saveplot=False):
+	
+	if line_region == 'Ha':
+		line_lam = Ha
+	if line_region == 'OI':
+		line_lam = OI
+	if line_region == 'SII':
+		line_lam = (SII1 + SII2)/2
+	if line_region == 'OIII':
+		line_lam = OIII
+
+	residual_range = ((line_lam-75),(line_lam+75))
 	plot_wave = np.exp(logLam)/(1+z)
 	resid_ind = np.intersect1d(np.where(plot_wave > residual_range[0])[0], np.where(plot_wave < residual_range[1])[0])
 	line_residuals = residuals[resid_ind]
@@ -207,8 +218,8 @@ def residual_fit_test(plot_name, pp, residuals, bin_number, Halpha_ANR, logLam, 
 		ax2 = plt.subplot(122)
 
 		fig.text(0.05, 0.97, f'Bin {bin_number}. Number of Spectra in Bin: {n_spec}', fontsize = 12)
-		fig.text(0.05, 0.93, 'A/rN of Halpha: '+str(Halpha_ANR))
-		fig.text(0.45, 0.93, f'Chi-Squared/DOF: {int(np.round(pp.chi2,-1))}')
+		fig.text(0.05, 0.93, 'A/rN of line: '+str(ANR))
+		fig.text(0.45, 0.93, f'Chi-Squared/DOF: {pp.chi2}')
 		fig.text(0.45, 0.9, f'KS p-value: {KS_result.pvalue}')
 
 		plt.sca(ax1)
@@ -231,7 +242,7 @@ def residual_fit_test(plot_name, pp, residuals, bin_number, Halpha_ANR, logLam, 
 		ax2.set_ylabel('Number')
 
 		full_plot_dir = f'{plot_dir}{plot_name}'
-		plot_fl = f'{full_plot_dir}/ppxf_residuals_bin{bin_number}_{ncomp}comp.png'
+		plot_fl = f'{full_plot_dir}/ppxf_residuals_bin{bin_number}_{ncomp}comp_{line_region}.png'
 
 		if os.path.exists(full_plot_dir) == False:
 			os.mkdir(full_plot_dir)
@@ -421,7 +432,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 				star_sig = bin_df['star_sig'].values[0]
 
 				start_vals  = [star_vel, star_sig]
-				start_vals_ncomp = [star_vel, star_sig*2] #for higher components, start with 2*stellar sigma width
+				start_vals_ncomp = [star_vel-200, star_sig*2] #for higher components, start with 2*stellar sigma width
 
 				start = np.concatenate((np.tile(start_vals, (3,1)), np.tile(start_vals_ncomp, ((ngas_comp-1)*2, 1)))) #first 3 are stellar and first gas, then add extra
 
@@ -433,7 +444,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 				if ngas_comp == 1:
 					bounds = None
 				if ngas_comp > 1:
-					gas_bounds = [[star_vel-300, star_vel+300], [20, 1000]]
+					gas_bounds = [[star_vel-600, star_vel+600], [20, 1000]]
 					bounds = [gas_bounds]
 					for n in range(ngas_comp):
 						bounds.append(gas_bounds)
@@ -593,6 +604,8 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 
 				wave_unexp = np.exp(logLam)
 
+				Halpha_ANR = ANR(None, 'Halpha_(1)', Ha, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
+
 				for idx, ggas in enumerate(gas_names):
 					ncomp_num = ggas[-2]
 					gas_name = ggas[:-4]
@@ -663,7 +676,7 @@ def ppxf_fit(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam,
 									n_spec, bn, mad_std_residuals, SN_wMadStandardDev, fit_gas)
 
 				if test_residuals == True:
-					KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_ANR, logLam, z, ngas_comp, n_spec)
+					KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_ANR, logLam, z, ngas_comp, n_spec, saveplot=True)
 
 	if fit_gas == True:
 		return save_dict
@@ -931,21 +944,28 @@ def ppxf_iterative_fit(cube, error_cube, vorbin_path, adegree, mdegree, wave_lam
 					ncomp_final = 2 #re-fit with 2 components
 
 
+			
+
 			if ncomp_final == 2:
 				# changing ppxf parameters to prep for 2 gas component fit
 
-				start = np.concatenate((np.tile(start_vals, (3,1)), np.tile(start_vals_ncomp, ((ngas_comp-1)*2, 1)))) #first 3 are stellar and first gas, then add extra
+				#start_vals = [param0[1][0], param0[1][1]] #previous fit parameters as new start parameters
+				#start_vals_ncomp[0] -= 200 #add some velocity offset for the 2nd component
+				
+				prev_fit_start_1 = [param0[1][0]+50, param0[1][1]]
+				prev_fit_start_2 = [param0[1][0]-50, param0[1][1]]
+
 				if single_gascomp == True:
-					start = np.concatenate((np.tile(start_vals, (2,1)), np.tile(start_vals_ncomp, ((ngas_comp-1), 1)))) #first 2 are stellar and first gas, then add extra
+					start = np.array((start_vals, prev_fit_start_1, prev_fit_start_2)) #first 2 are stellar and first gas, then add extra
+				else:
+					start = np.array((start_vals, prev_fit_start_1, prev_fit_start_2, prev_fit_start_1, prev_Fit_start_2)) #first 3 are stellar and first gas, then add extra
 
-
-				gas_bounds = [[star_vel-300, star_vel+300], [20, 1000]]
+				gas_bounds = [[star_vel-600, star_vel+600], [20, 1000]]
 				bounds = [gas_bounds]
 				for n in range(ngas_comp):
 					bounds.append(gas_bounds)
 					if single_gascomp == False: #if splitting balmer, then need to add another set of bounds
 						bounds.append(gas_bounds)
-
 
 				if single_gascomp == True:
 					component = [0] + [1]*n_gas + [2]*n_gas
@@ -965,6 +985,22 @@ def ppxf_iterative_fit(cube, error_cube, vorbin_path, adegree, mdegree, wave_lam
 						clean=False, lam=np.exp(logLam)/(1+z),
 						component=component, gas_component=gas_component, bounds=bounds, #constr_kinem=constr_kinem,
 						gas_names=gas_names, goodpixels = good_pixels, global_search=globsearch)
+
+				if pp.chi2 > 8:
+					print('BAD FIT, re-trying with global_search=True')
+
+					prev_fit_start_1 = [param0[1][0], param0[1][1]]
+					prev_fit_start_2 = [param0[1][0]-200, param0[1][1]]
+					if single_gascomp == True:
+						start = np.array((start_vals, prev_fit_start_1, prev_fit_start_2)) #first 2 are stellar and first gas, then add extra
+					else:
+						start = np.array((start_vals, prev_fit_start_1, prev_fit_start_2, prev_fit_start_1, prev_Fit_start_2)) #first 3 are stellar and first gas, then add extra
+
+					pp = ppxf(templates_2comp, galaxy, noise_lin, velscale, start,
+						plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
+						clean=False, lam=np.exp(logLam)/(1+z),
+						component=component, gas_component=gas_component, bounds=bounds, #constr_kinem=constr_kinem,
+						gas_names=gas_names, goodpixels = good_pixels, global_search=False)#True)
 
 				bestfit = pp.bestﬁt
 				residuals = galaxy - bestfit
@@ -995,8 +1031,16 @@ def ppxf_iterative_fit(cube, error_cube, vorbin_path, adegree, mdegree, wave_lam
 				if plot_every > 0 and bn % plot_every == 0:
 					output_ppxf_fit_plot(plot_name, pp, good_pixels, logLam, vel_comp0, z, ncomp_final, n_spec,
 										bn, mad_std_residuals, SN_wMadStandardDev, fit_gas=True)
+
+				OI_anr = ANR(None, 'OI_(1)', OI, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
+				SII_anr = ANR(None, 'SII_(1)', SII1, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
+				OIII_anr = ANR(None, 'OIII_(1)', SII1, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
+
 				if Halpha_anr >= 10:
 					KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_anr, logLam, z, ncomp_final, n_spec, saveplot=True)
+					KS_result = residual_fit_test(plot_name, pp, residuals, bn, OI_anr, logLam, z, ncomp_final, n_spec, saveplot=True, line_region='OI')
+					KS_result = residual_fit_test(plot_name, pp, residuals, bn, SII_anr, logLam, z, ncomp_final, n_spec, saveplot=True, line_region='SII')
+					KS_result = residual_fit_test(plot_name, pp, residuals, bn, OIII_anr, logLam, z, ncomp_final, n_spec, saveplot=True, line_region='OIII')
 
 
 			#adding values to save dictionary - same for 1 and 2 comp
@@ -1289,14 +1333,16 @@ def run_iterative_gas_fit(runID, cube_path, vorbin_path, prev_fit_path, plot_eve
 cube_path = "../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
 vorbin_path = "ppxf_output/NGC1266_voronoi_output_targetSN_10_2022Oct18.txt"
 run_id_stellar = 'Dec22'
-run_id_gas = 'Feb23'
-bin_num = 2200
+#run_id_gas = 'Feb23_start-200'
+run_id_gas = 'Feb23_individual'
+#run_id_gas = 'Feb23_individual_2comp'
+bin_num = 2002
 
 #run_stellar_fit(run_id_stellar, cube_path, vorbin_path, fit_gas=False, prev_fit_path=None, plot_every=100)
-#run_gas_fit(run_id_gas, cube_path, vorbin_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}.csv', plot_every=100, ngas_comp=1,
+#run_gas_fit(run_id_gas, cube_path, vorbin_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}.csv', plot_every=1, ngas_comp=2,
 #			single_gascomp=True, globsearch=False, individual_bin=bin_num)
 run_iterative_gas_fit(run_id_gas, cube_path, vorbin_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}.csv', plot_every=100,
-					single_gascomp=True, globsearch=False, individual_bin=None)
+					single_gascomp=True, globsearch=False, individual_bin=bin_num)
 
 
 
