@@ -251,8 +251,244 @@ def residual_fit_test(plot_name, pp, residuals, bin_number, ANR, logLam, z, ncom
 
 
 
+def fit_emission_lines(templates, galaxy, noise, velscale, start, moments, adegree, mdegree, ngas_comp,
+						dv, lam, bounds, gas_names, good_pixels, globsearch):
+
+
+
+	# Assign component=0 to the stellar templates, component=1 to gas
+	if ngas_comp == 1:
+		component = [0] + [1]*n_gas
+	if ngas_comp == 2:
+		component = [0] + [1]*n_gas + [2]*n_gas
+	if ngas_comp == 3:
+		component = [0]+ [1]*n_gas + [2]*n_gas + [3]*n_gas 
+
+	gas_component = np.array(component) > 0  # gas_component=True for gas 
+
+	moments = np.repeat(2, ngas_comp + 1)
+	moments[0] = -2
+
+	
+
+	pp = ppxf(templates, galaxy, noise_lin, velscale, start,
+			plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
+			clean=False, lam=lam,
+			component=component, gas_component=gas_component, bounds=bounds,
+			gas_names=gas_names_1comp, goodpixels = good_pixels, global_search=globsearch)
+
+
+	return pp 
+
+
 def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot_every=0,
-					plot_name=None, prev_vmap_path=None):
+					plot_name=None, prev_vmap_path=None, individual_bin=None):
+	#cube - unbinned data cube
+	#error_cube - unbinned error cube
+	#moments - ppxf moments for fitting
+	#adegree - degree of additive poly
+	#mdegree - degree of multiplicative poly
+	#wave_lam - wavelength array
+	#plot_every - if 0, don't output any plots, otherwise output a plot every [n] bins
+	#plot_name - name for output plots
+	#prev_fit_path - if supplied, use previous fit info
+	#individual_spaxel - int - if not None, bin number of single bin to fit
+	#galaxy parameters
+
+	z = 0.007214         # NGC 1266 redshift, from SIMBAD
+	galv = np.log(z+1)*c # estimate of galaxy's velocity
+
+	save_dict = {'bin_num':[], 'star_vel':[], 'star_vel_error':[], 'star_sig':[], 'star_sig_error':[],
+	'SN_mad_STD':[], 'chisq/dof':[]}
+
+	# MUSE spectral resolution, in Angstroms
+	FWHM_gal = 2.51
+	
+
+
+	#preparing stellar templates
+	miles_lamrange_trunc = [3525, 9300] #expanded EMILES templates cover more
+	wave_lam_rest = wave_lam/(1+z)
+	cube_fit_ind = np.where((wave_lam_rest > miles_lamrange_trunc[0]) & (wave_lam_rest < miles_lamrange_trunc[1]))[0] #only fit rest-frame area covered by templates
+
+	#shorten all spectra to only be within fitting area - only fit central 22" which is 110 pixels
+	cube_trunc = cube[cube_fit_ind,108:218,90:200] 
+	error_cube_trunc = error_cube[cube_fit_ind,108:218,90:200]
+
+	wave_trunc_rest = wave_lam_rest[cube_fit_ind]
+	wave_trunc = wave_lam[cube_fit_ind]
+
+	#wavelength ranges of rest-frame data
+	wave_trunc_rest_range = wave_trunc_rest[[0,-1]]
+	wave_trunc_range = wave_trunc[[0,-1]]
+
+	#rebinning the wavelength to get the velscale
+	example_spec = cube_trunc[:,65,65] #only using this for log-rebinning
+	example_spec_rebin, log_wave_trunc, velscale_trunc = util.log_rebin(wave_trunc_range, example_spec)
+
+
+	#assigning each pixel a bin number
+	binNum = np.reshape(np.arange(cube_trunc.shape[1]*cube_trunc.shape[2]), (cube_trunc.shape[1], cube_trunc.shape[2]))
+	print(cube.shape)
+	print(binNum.shape)
+	x,y = np.meshgrid(np.arange(cube.shape[2]), np.arange(cube.shape[1]))
+
+	code_dir = "../../ppxf_files/EMILES_BASTI_BASE_CH_FITS/" # directory where stellar templates are located
+	pathname = os.path.join(code_dir, 'Ech1.30*.fits')
+	miles = lib.miles(pathname, velscale_trunc, FWHM_gal, wave_range=[3523, 9500])		# The stellar templates are reshaped below into a 2-dim array with each	
+																						# spectrum as a column, however we save the original array dimensions,
+																						# which are needed to specify the regularization dimensions.
+	reg_dim = miles.templates.shape[1:]
+	stars_templates = miles.templates.reshape(miles.templates.shape[0], -1)
+	n_temps = stars_templates.shape[1]
+
+	#for saving optimal templates for each bin
+	n_bins = len(np.unique(binNum)) - 1 #subtract 1 for -1 bin
+	optimal_templates_save = np.empty((stars_templates.shape[0], n_bins))
+
+	lam_temp = miles.lam_temp
+	lamRange_temp = [lam_temp[0], lam_temp[-1]]
+
+	
+	templates = stars_templates
+	gas_component = None
+	gas_names = None
+	component = 0
+
+	#velocity difference between templates and data, templates start around 3500 and data starts closer to 4500
+	dv = c*(np.log(miles.lam_temp[0]/wave_trunc[0])) # eq.(8) of Cappellari (2017)
+
+
+	#if previous voronoi binned stellar velocity map supplied, use it for initial conditions
+	if prev_vmap_path is not None:
+		pvmap_fl = fits.open(prev_vmap_path)
+		prev_vmap = pvmap_fl[1].data[1,108:218,90:200]
+		prev_sigmap = pvmap_fl[1].data[2,108:218,90:200]
+	else:
+		prev_vmap = None
+
+	loop_list = np.unique(binNum)
+	if individual_bin is not None:
+		loop_list = [individual_bin]
+
+	for bn in loop_list: 
+		save_dict['bin_num'].append(bn)
+
+		b_loc = np.where(binNum == bn)
+		x_loc = x[b_loc]
+		y_loc = y[b_loc]
+
+		spectrum = cube_trunc[:,y_loc,x_loc]
+		err_spectrum = error_cube_trunc[:,y_loc,x_loc]
+
+		print('\n============================================================================')
+		print('binNum: {}'.format(bn))
+		#also use previous optimal stellar template if fitting gas
+		#choose starting values - just use galaxy velocity if no previous fit included
+
+		if prev_vmap is not None:
+			prev_vel = prev_vmap[y_loc, x_loc][0]
+			prev_sig = prev_sigmap[y_loc, x_loc][0]
+
+			start_vals = [prev_vel, prev_sig]
+
+		else:
+			start_vals = [galv, 25]
+		
+		start = start_vals
+		bounds = None
+
+		templates /= np.median(templates)
+
+		### take mean of spectra
+		#gal_lin = np.nansum(spectra, axis=1)/n_spec
+		#noise_lin = np.sqrt(np.nansum(np.abs(err_spectra), axis=1))/n_spec #add error spectra in quadrature, err is variance so no need to square
+
+		gal_lin = spectrum[:,0]
+		noise_lin = err_spectrum[:,0]
+
+		#noise_lin = noise_lin/np.nanmedian(noise_lin)
+		noise_lin[np.isinf(noise_lin)] = np.nanmedian(noise_lin)
+		noise_lin[noise_lin == 0] = np.nanmedian(noise_lin)
+		noise_lin[np.isnan(noise_lin)] = np.nanmedian(noise_lin)
+
+		galaxy, logLam, velscale = util.log_rebin(wave_trunc_range, gal_lin)
+		#log_noise, logLam_noise, velscale_noise = util.log_rebin(lamRange, noise_lin) # I don't think this needs to be log-rebinned also
+
+		maskreg = (5880,5950) #galactic and extragalactic NaD in this window, observed wavelength
+		reg1 = np.where(np.exp(logLam) < maskreg[0])
+		reg2 = np.where(np.exp(logLam) > maskreg[1])
+		good_pixels = np.concatenate((reg1, reg2), axis=1)
+		good_pixels = good_pixels.reshape(good_pixels.shape[1])
+
+		goodpix_util = custom_util.determine_goodpixels(logLam, lamRange_temp, z) #uses z to get redshifted line wavelengths, so logLam should be observer frame
+		good_pix_total = np.intersect1d(goodpix_util, good_pixels)
+
+		#find nans, set them to median values and then remove from good pixels
+		nan_ind = np.where(np.isnan(galaxy))
+		galaxy[nan_ind] = np.nanmedian(galaxy)
+		noise_lin[nan_ind] = np.nanmedian(noise_lin)
+
+		goodpix_ind = np.where(good_pix_total == nan_ind)
+		good_pix_total = np.delete(good_pix_total, goodpix_ind)
+
+
+		#CALLING PPXF HERE!
+		t = clock()
+
+		print(start)
+		pp = ppxf(templates, galaxy, noise_lin, velscale, start,
+					plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
+					clean=False, lam=np.exp(logLam)/(1+z), #regul= 1/0.1 , reg_dim=reg_dim,
+					component=component, gas_component=gas_component, bounds=bounds,
+					goodpixels = good_pix_total, global_search=False)
+
+		bestfit = pp.bestﬁt
+		residuals = galaxy - bestfit
+
+		param0 = pp.sol
+		error = pp.error
+
+		mad_std_residuals = mad_std(residuals, ignore_nan=True)    
+		med_galaxy = np.nanmedian(galaxy) #this will stand in for signal probably will be ~1
+		SN_wMadStandardDev = med_galaxy/mad_std_residuals 
+		save_dict['SN_mad_STD'].append(SN_wMadStandardDev)
+		print('S/N w/ mad_std: '+str(SN_wMadStandardDev))
+
+		vel_comp0 = param0[0]
+		vel_error_comp0 = error[0]*np.sqrt(pp.chi2)
+		sig_comp0 = param0[1]
+		sig_error_comp0 = error[1]*np.sqrt(pp.chi2)
+
+		optimal_template = templates @ pp.weights
+		optimal_templates_save[:,bn] = optimal_template
+
+
+		save_dict['star_vel'].append(vel_comp0) 
+		save_dict['star_vel_error'].append(vel_error_comp0)
+		save_dict['star_sig'].append(sig_comp0)
+		save_dict['star_sig_error'].append(sig_error_comp0)
+		save_dict['chisq/dof'].append(pp.chi2)
+
+		fit_chisq = (pp.chi2 - 1)*galaxy.size
+		print('============================================================================')
+		print('Desired Delta Chi^2: %.4g' % np.sqrt(2*galaxy.size))
+		print('Current Delta Chi^2: %.4g' % (fit_chisq))
+		print('Elapsed time in PPXF: %.2f s' % (clock() - t))
+		print('============================================================================')
+
+
+		if plot_every > 0 and bn % plot_every == 0:
+
+			output_ppxf_fit_plot(plot_name, pp, good_pix_total, logLam, vel_comp0, z, 0, 
+								bn, mad_std_residuals, SN_wMadStandardDev, fit_gas=False)
+
+
+	return save_dict, optimal_templates_save
+
+
+def ppxf_fit_gas(cube, error_cube, moments, adegree, mdegree, wave_lam, limit_doublets=True, tie_balmer=False, plot_every=0,
+				plot_name=None, prev_fit_path=None, ngas_comp=1, globsearch=False, individual_bin=None, test_residuals=True):
 	#cube - unbinned data cube
 	#error_cube - unbinned error cube
 	#moments - ppxf moments for fitting
@@ -297,276 +533,68 @@ def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot
 	example_spec = cube_trunc[:,150,150] #only using this for log-rebinning
 	example_spec_rebin, log_wave_trunc, velscale_trunc = util.log_rebin(wave_trunc_range, example_spec)
 
+	#need to load in templates to get wavelength axis
 	code_dir = "../../ppxf_files/EMILES_BASTI_BASE_CH_FITS/" # directory where stellar templates are located
 	pathname = os.path.join(code_dir, 'Ech1.30*.fits')
-	miles = lib.miles(pathname, velscale_trunc, FWHM_gal)							# The stellar templates are reshaped below into a 2-dim array with each	
+	miles = lib.miles(pathname, velscale_trunc, FWHM_gal, wave_range=[3523, 9500])		# The stellar templates are reshaped below into a 2-dim array with each	
 																						# spectrum as a column, however we save the original array dimensions,
 																						# which are needed to specify the regularization dimensions.
-	reg_dim = miles.templates.shape[1:]
-	stars_templates = miles.templates.reshape(miles.templates.shape[0], -1)
-	n_temps = stars_templates.shape[1]
-
-	#for saving optimal templates for each bin
-	n_bins = len(np.unique(binNum)) - 1 #subtract 1 for -1 bin
-	optimal_templates_save = np.empty((stars_templates.shape[0], n_bins))
 
 	lam_temp = miles.lam_temp
 	lamRange_temp = [lam_temp[0], lam_temp[-1]]
 
+	gas_templates, gas_names, line_wave = custom_util.emission_lines(miles.ln_lam_temp, wave_trunc_range, FWHM_gal, 
+															tie_balmer=tie_balmer, limit_doublets=limit_doublets)
+
+	n_gas = len(gas_names)
+	n_balmer = 2
+	n_other = n_gas - n_balmer  # forbidden lines contain "[*]"
 	
-	templates = stars_templates
-	gas_component = None
-	gas_names = None
-	component = 0
+	ngas_comp = 2 #max number of gas components
+	ngas_comp_start = 1 #start by fitting 2 component gas fits
+	gas_templates_2comp = np.tile(gas_templates, 2) #need to make 1 comp and 2 comp templates
+	gas_templates_1comp = gas_templates
+	gas_names_1comp = np.asarray([a + f"_({p+1})" for p in range(ngas_comp_start) for a in gas_names])
+	gas_names = np.asarray([a + f"_({p+1})" for p in range(ngas_comp) for a in gas_names])
+	line_wave = np.tile(line_wave, ngas_comp)
 
-	#velocity difference between templates and data, templates start around 3500 and data starts closer to 4500
-	dv = c*(np.log(miles.lam_temp[0]/wave_trunc[0])) # eq.(8) of Cappellari (2017)
+	# Assign component=0 to the stellar templates, component=1 to gas
+	if ngas_comp == 1:
+		component = [0] + [1]*n_gas
+	if ngas_comp == 2:
+		component = [0] + [1]*n_gas + [2]*n_gas
+	if ngas_comp == 3:
+		component = [0]+ [1]*n_gas + [2]*n_gas + [3]*n_gas 
 
+	for num in range(1, ngas_comp+1):
+		save_dict[f'gas_({num})_vel'] = []
+		save_dict[f'gas_({num})_vel_error'] = []
+		save_dict[f'gas_({num})_sig'] = []
+		save_dict[f'gas_({num})_sig_error'] = []
 
-	#if previous voronoi binned stellar velocity map supplied, use it for initial conditions
-	if prev_vmap_path is not None:
-		pvmap_fl = fits.open(prev_vmap_path)
-		prev_vmap = pvmap_fl[1].data[0,:,:]
-		prev_sigmap = pvmap_fl[1].data[1,:,:]
-	else:
-		prev_vmap = None
-
-	loop_list = np.unique(binNum)
-
-	for bn in loop_list: 
-		if bn >= 0: #skip nan bins with binNum == -1
-
-
-			save_dict['bin_num'].append(bn)
-
-			b_loc = np.where(binNum == bn)
-			x_loc = x[b_loc]
-			y_loc = y[b_loc]
-
-			spectrum = cube_trunc[:,y_loc,x_loc]
-			err_spectrum = error_cube_trunc[:,y_loc,x_loc]
-			
-			npix_edge = 10
-			if x_loc < npix_edge or cube.shape[2] - x_loc < npix_edge or y_loc < npix_edge or cube.shape[1] - y_loc < npix_edge:
-				#spectrum[np.isnan(spectrum)==False].shape[0] < 3000: #if less than 3000 non nan data points
-				save_dict['star_vel'].append(np.nan)
-				save_dict['star_vel_error'].append(np.nan)
-				save_dict['star_sig'].append(np.nan)
-				save_dict['star_sig_error'].append(np.nan)
-				save_dict['SN_mad_STD'].append(np.nan)
-				save_dict['chisq/dof'].append(np.nan)
-
-				continue
-
-			print('\n============================================================================')
-			print('binNum: {}'.format(bn))
-			#also use previous optimal stellar template if fitting gas
-			#choose starting values - just use galaxy velocity if no previous fit included
-
-			if prev_vmap is not None:
-				prev_vel = prev_vmap[y_loc, x_loc][0]
-				prev_sig = prev_sigmap[y_loc, x_loc][0]
-
-				start_vals = [prev_vel, prev_sig]
-
-			else:
-				start_vals = [galv, 25]
-			
-			start = start_vals
-			bounds = None
-
-			templates /= np.median(templates)
-
-			### take mean of spectra
-			#gal_lin = np.nansum(spectra, axis=1)/n_spec
-			#noise_lin = np.sqrt(np.nansum(np.abs(err_spectra), axis=1))/n_spec #add error spectra in quadrature, err is variance so no need to square
-
-			gal_lin = spectrum[:,0]
-			noise_lin = err_spectrum[:,0]
-
-			#noise_lin = noise_lin/np.nanmedian(noise_lin)
-			noise_lin[np.isinf(noise_lin)] = np.nanmedian(noise_lin)
-			noise_lin[noise_lin == 0] = np.nanmedian(noise_lin)
-
-			galaxy, logLam, velscale = util.log_rebin(wave_trunc_range, gal_lin)
-			#log_noise, logLam_noise, velscale_noise = util.log_rebin(lamRange, noise_lin) # I don't think this needs to be log-rebinned also
-
-			maskreg = (5880,5950) #galactic and extragalactic NaD in this window, observed wavelength
-			reg1 = np.where(np.exp(logLam) < maskreg[0])
-			reg2 = np.where(np.exp(logLam) > maskreg[1])
-			good_pixels = np.concatenate((reg1, reg2), axis=1)
-			good_pixels = good_pixels.reshape(good_pixels.shape[1])
-
-			goodpix_util = custom_util.determine_goodpixels(logLam, lamRange_temp, z) #uses z to get redshifted line wavelengths, so logLam should be observer frame
-			good_pix_total = np.intersect1d(goodpix_util, good_pixels)
-
-			#CALLING PPXF HERE!
-			t = clock()
-			pp = ppxf(templates, galaxy, noise_lin, velscale, start,
-						plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
-						clean=False, lam=np.exp(logLam)/(1+z), #regul= 1/0.1 , reg_dim=reg_dim,
-						component=component, gas_component=gas_component, bounds=bounds,
-						goodpixels = good_pix_total, global_search=False)
-
-			bestfit = pp.bestﬁt
-			residuals = galaxy - bestfit
-
-			param0 = pp.sol
-			error = pp.error
-
-			mad_std_residuals = mad_std(residuals, ignore_nan=True)    
-			med_galaxy = np.nanmedian(galaxy) #this will stand in for signal probably will be ~1
-			SN_wMadStandardDev = med_galaxy/mad_std_residuals 
-			save_dict['SN_mad_STD'].append(SN_wMadStandardDev)
-			print('S/N w/ mad_std: '+str(SN_wMadStandardDev))
-
-			vel_comp0 = param0[0]
-			vel_error_comp0 = error[0]*np.sqrt(pp.chi2)
-			sig_comp0 = param0[1]
-			sig_error_comp0 = error[1]*np.sqrt(pp.chi2)
-
-			optimal_template = templates @ pp.weights
-			optimal_templates_save[:,bn] = optimal_template
+	gas_component = np.array(component) > 0  # gas_component=True for gas 
 
 
-			save_dict['star_vel'].append(vel_comp0) 
-			save_dict['star_vel_error'].append(vel_error_comp0)
-			save_dict['star_sig'].append(sig_comp0)
-			save_dict['star_sig_error'].append(sig_error_comp0)
-			save_dict['chisq/dof'].append(pp.chisq)
+	for ggas in gas_names:
+		ncomp_num = ggas[-2]
+		gas_name = ggas[:-4]
+		if gas_name == 'HeI5876':
+			continue
+		save_dict[ggas+'_flux'] = [] #flux is measured flux from ppxf
+		save_dict[ggas+'_flux_error'] = []
+		save_dict[ggas+'_amplitude'] = [] #amplitude is max flux in gas bestfit - so includes all components
+		save_dict[ggas+'_ANR'] = [] #amplitude / mad_std_residuals
+		save_dict[ggas+'_comp_amp'] = [	] #max flux only in the relevant component
 
-			fit_chisq = (pp.chi2 - 1)*galaxy.size
-			print('============================================================================')
-			print('Desired Delta Chi^2: %.4g' % np.sqrt(2*galaxy.size))
-			print('Current Delta Chi^2: %.4g' % (fit_chisq))
-			print('Elapsed time in PPXF: %.2f s' % (clock() - t))
-			print('============================================================================')
+		if gas_name == '[NII]6583_d':
+			save_dict[f'[NII]6548_({ncomp_num})_amplitude'] = []
+			save_dict[f'[NII]6548_({ncomp_num})_ANR'] = []
 
+	#load in previous fit files for later use:
+	prev_dict = pd.read_csv(prev_fit_path)
+	prev_templates_path = prev_fit_path[:-4] + '_templates.npy'
+	prev_temps = np.load(prev_templates_path)
 
-			if plot_every > 0 and bn % plot_every == 0:
-
-				output_ppxf_fit_plot(plot_name, pp, good_pix_total, logLam, vel_comp0, z, 0, 
-									bn, mad_std_residuals, SN_wMadStandardDev, fit_gas=False)
-
-
-	return save_dict, optimal_templates_save
-
-
-def ppxf_fit_gas(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_lam, limit_doublets=True, tie_balmer=False, plot_every=0,
-				plot_name=None, prev_fit_path=None, fit_gas=True, ngas_comp=1, globsearch=False, individual_bin=None, test_residuals=True):
-	## this will be the main function to fit gas pixel-by-pixel with 1-2 components depending on the spectrum
-
-	#cube - unbinned data cube
-	#error_cube - unbinned error cube
-	#vorbin_path - path to voronoi bin file, if None then fit pixel by pixel
-	#moments - ppxf moments for fitting
-	#adegree - degree of additive poly
-	#mdegree - degree of multiplicative poly
-	#wave_lam - wavelength array
-	#limit_doublets - if True, requires doublets to have ratios permitted by atomic physics
-	#tie_balmer - if True, Balmer series are a single template
-	#plot_every - if 0, don't output any plots, otherwise output a plot every [n] bins
-	#plot_name - name for output plots
-	#prev_fit_path - if supplied, use previous fit info
-	#fit_gas - if True, fit gas emission lines, otherwise mask them and only do stellar continuum
-	#ngas_comp - number of kinematic components to fit gas with
-	#globsearch - bool - choose to set this during ppxf, True is important for complex multi-component, but slow
-	#individual_spaxel - int - if not None, bin number of single bin to fit
-	#galaxy parameters
-
-	z = 0.007214         # NGC 1266 redshift, from SIMBAD
-	galv = np.log(z+1)*c # estimate of galaxy's velocity
-
-	save_dict = {'bin_num':[], 'star_vel':[], 'star_vel_error':[], 'star_sig':[], 'star_sig_error':[], 'SN_mad_STD':[]}
-
-	# MUSE spectral resolution, in Angstroms
-	FWHM_gal = 2.51
-	
-	#voronoi bin file
-	if vorbin_path is not None:
-		x,y,binNum = np.loadtxt(vorbin_path).T
-		x,y,binNum = x.astype(int), y.astype(int), binNum.astype(int)
-	else:
-		binNum = np.reshape(np.arange(cube.shape[1]*cube.shape[2]), cube.shape[1,2])
-		x,y = np.meshgrid(np.arange(cube.shape[1]), np.arange(cube.shape[2]))
-
-	#wavelength ranges of rest-frame data
-	wave_rest_range = wave_lam_rest[[0,-1]]
-	wave_range = wave_lam[[0,-1]]
-
-	#rebinning the wavelength to get the velscale
-	example_spec = cube[:,150,150] #only using this for log-rebinning
-	example_spec_rebin, log_wave, velscale = util.log_rebin(wave_range, example_spec)
-
-	code_dir = "../../ppxf_files/EMILES_BASTI_BASE_CH_FITS/" # directory where extended stellar templates are located
-	pathname = os.path.join(code_dir, 'Ech1.30*.fits')
-	miles = lib.miles(pathname, velscale, FWHM_gal)							# The stellar templates are reshaped below into a 2-dim array with each	
-																						# spectrum as a column, however we save the original array dimensions,
-																						# which are needed to specify the regularization dimensions.
-	reg_dim = miles.templates.shape[1:]
-	stars_templates = miles.templates.reshape(miles.templates.shape[0], -1)
-	n_temps = stars_templates.shape[1]
-
-	#for saving optimal templates for each bin
-	n_bins = len(np.unique(binNum)) - 1 #subtract 1 for -1 bin
-	optimal_templates_save = np.empty((stars_templates.shape[0], n_bins))
-
-	lam_temp = miles.lam_temp
-	lamRange_temp = [lam_temp[0], lam_temp[-1]]
-
-	if fit_gas == True:
-		gas_templates, gas_names, line_wave = custom_util.emission_lines(miles.ln_lam_temp, wave_trunc_range, FWHM_gal, 
-																tie_balmer=tie_balmer, limit_doublets=limit_doublets)
-
-		n_gas = len(gas_names)
-		gas_templates_tile = np.tile(gas_templates, ngas_comp)
-		gas_names = np.asarray([a + f"_({p+1})" for p in range(ngas_comp) for a in gas_names])
-		line_wave = np.tile(line_wave, ngas_comp)
-
-		# Assign component=0 to the stellar templates, component=1 to gas
-		if ngas_comp == 1:
-			component = [0] + [1]*n_gas
-		if ngas_comp == 2:
-			component = [0] + [1]*n_gas + [2]*n_gas
-		if ngas_comp == 3:
-			component = [0]+ [1]*n_gas + [2]*n_gas + [3]*n_gas 
-	
-		for num in range(1, ngas_comp+1):
-			save_dict[f'gas_({num})_vel'] = []
-			save_dict[f'gas_({num})_vel_error'] = []
-			save_dict[f'gas_({num})_sig'] = []
-			save_dict[f'gas_({num})_sig_error'] = []
-
-		gas_component = np.array(component) > 0  # gas_component=True for gas 
-
-
-		for ggas in gas_names:
-			ncomp_num = ggas[-2]
-			gas_name = ggas[:-4]
-			if gas_name == 'HeI5876':
-				continue
-			save_dict[ggas+'_flux'] = [] #flux is measured flux from ppxf
-			save_dict[ggas+'_flux_error'] = []
-			save_dict[ggas+'_amplitude'] = [] #amplitude is max flux in gas bestfit - so includes all components
-			save_dict[ggas+'_ANR'] = [] #amplitude / mad_std_residuals
-			save_dict[ggas+'_comp_amp'] = [	] #max flux only in the relevant component
-
-			if gas_name == '[NII]6583_d':
-				save_dict[f'[NII]6548_({ncomp_num})_amplitude'] = []
-				save_dict[f'[NII]6548_({ncomp_num})_ANR'] = []
-
-		#load in previous fit files for later use:
-		prev_dict = pd.read_csv(prev_fit_path)
-		prev_templates_path = prev_fit_path[:-4] + '_templates.npy'
-		prev_temps = np.load(prev_templates_path)
-
-	else:
-		templates = stars_templates
-		gas_component = None
-		gas_names = None
-		component = 0
-
-	
 
 	#velocity difference between templates and data, templates start around 3500 and data starts closer to 4500
 	dv = c*(np.log(miles.lam_temp[0]/wave_trunc[0])) # eq.(8) of Cappellari (2017)
@@ -576,121 +604,145 @@ def ppxf_fit_gas(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_
 		loop_list = [individual_bin]
 
 	for bn in loop_list: 
-		if bn >= 0: #skip nan bins with binNum == -1
-			print('\n============================================================================')
-			print('binNum: {}'.format(bn))
-			save_dict['bin_num'].append(bn)
-			b_loc = np.where(binNum == bn)[0]
-			x_loc = x[b_loc]
-			y_loc = y[b_loc]
+		save_dict['bin_num'].append(bn)
 
-			spectra = cube[:,y_loc,x_loc]
-			err_spectra = error_cube[:,y_loc,x_loc]
+		b_loc = np.where(binNum == bn)
+		x_loc = x[b_loc]
+		y_loc = y[b_loc]
 
-			n_spec = spectra.shape[1] #don't need n_spec to run ppxf
-			print('n_spec in bin: ', n_spec)
+		spectrum = cube_trunc[:,y_loc,x_loc]
+		err_spectrum = error_cube_trunc[:,y_loc,x_loc]
+		
+		npix_edge = 10
+		if x_loc < npix_edge or cube.shape[2] - x_loc < npix_edge or y_loc < npix_edge or cube.shape[1] - y_loc < npix_edge:
+			#spectrum[np.isnan(spectrum)==False].shape[0] < 3000: #if less than 3000 non nan data points
+			save_dict['star_vel'].append(np.nan)
+			save_dict['star_vel_error'].append(np.nan)
+			save_dict['star_sig'].append(np.nan)
+			save_dict['star_sig_error'].append(np.nan)
+			save_dict['SN_mad_STD'].append(np.nan)
+			save_dict['chisq/dof'].append(np.nan)
 
-			
-			#also use previous optimal stellar template if fitting gas
-			#choose starting values - just use galaxy velocity if no previous fit included
+			continue
 
-			if fit_gas == True:
-				#if previous fit data supplied, use previous starting values
-				bin_df = prev_dict.loc[prev_dict['bin_num'] == bn]
-				star_vel = bin_df['star_vel'].values[0]
-				star_sig = bin_df['star_sig'].values[0]
+		print('\n============================================================================')
+		print('binNum: {}'.format(bn))
 
-				start_vals  = [star_vel, star_sig]
-				start_vals_ncomp = [star_vel-200, star_sig*2] #for higher components, start with 2*stellar sigma width
-
-				start = np.concatenate((np.tile(start_vals, (3,1)), np.tile(start_vals_ncomp, ((ngas_comp-1)*2, 1)))) #first 3 are stellar and first gas, then add extra
-
-				if single_gascomp == True:
-					start = np.concatenate((np.tile(start_vals, (2,1)), np.tile(start_vals_ncomp, ((ngas_comp-1), 1)))) #first 2 are stellar and first gas, then add extra
+		#also use previous optimal stellar template
+		#choose starting values - just use galaxy velocity if no previous fit included
 
 
-				# setting bounds
-				if ngas_comp == 1:
-					bounds = None
-				if ngas_comp > 1:
-					gas_bounds = [[star_vel-600, star_vel+600], [20, 1000]]
-					bounds = [gas_bounds]
-					for n in range(ngas_comp):
-						bounds.append(gas_bounds)
-						if single_gascomp == False: #if splitting balmer, then need to add another set of bounds
-							bounds.append(gas_bounds)
+		if prev_vel_1comp is not None: #if there was an immediately preceeding successful fit
+			start_vals = [prev_vel_1comp, prev_sig_1comp]
+			bounds = [[prev_vel_1comp - 50, prev_vel_1comp + 50], [20,1000]] #should have bounds if we have a previous fit
+
+		else:
+			start_vals = [galv, 150]
+			bounds = None
+		
+		start = start_vals
+	
+		templates_1comp = np.column_stack([opt_temp, gas_templates_1comp])
+		templates_1comp /= np.median(templates_1comp)
+		templates_2comp = np.column_stack([opt_temp, gas_templates_2comp])
+		templates_2comp /= np.median(templates_2comp)
+
+		gal_lin = spectrum[:,0]
+		noise_lin = err_spectrum[:,0]
+
+		noise_lin[np.isinf(noise_lin)] = np.nanmedian(noise_lin)
+		noise_lin[noise_lin == 0] = np.nanmedian(noise_lin)
+		noise_lin[np.isnan(noise_lin)] = np.nanmedian(noise_lin)
+
+		galaxy, logLam, velscale = util.log_rebin(wave_trunc_range, gal_lin)
+
+		maskreg = (5880,5950) #galactic and extragalactic NaD in this window, observed wavelength
+		reg1 = np.where(np.exp(logLam) < maskreg[0])
+		reg2 = np.where(np.exp(logLam) > maskreg[1])
+		good_pixels = np.concatenate((reg1, reg2), axis=1)
+		good_pix_total = good_pixels.reshape(good_pixels.shape[1])
+
+		#find nans, set them to median values and then remove from good pixels
+		nan_ind = np.where(np.isnan(galaxy))
+		print(nan_ind)
+		galaxy[nan_ind] = np.nanmedian(galaxy)
+		noise_lin[nan_ind] = np.nanmedian(noise_lin)
+
+		goodpix_ind = np.where(good_pix_total == nan_ind)
+		good_pix_total = np.delete(good_pix_total, goodpix_ind)
+
+		lam = np.exp(logLam)/(1+z)
+		ncomp = 1
+
+		#CALLING PPXF HERE!
+		t = clock()
+
+		pp = fit_emission_lines(templates, galaxy, noise_lin, velscale, start,
+								moments, adegree, mdegree, ncomp,
+								dv, lam, bounds, gas_names, good_pix_total, globsearch=False)
+
+		#pp = ppxf(templates, galaxy, noise_lin, velscale, start,
+		#			plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
+		#			clean=False, lam=np.exp(logLam)/(1+z), #regul= 1/0.1 , reg_dim=reg_dim,
+		#			component=component, gas_component=gas_component, bounds=bounds,
+		#			goodpixels = good_pix_total, global_search=False)
+
+		##from below
+		bestfit = pp.bestﬁt
+		residuals = galaxy - bestfit
+
+		param0 = pp.sol
+		error = pp.error
+
+		mad_std_residuals = mad_std(residuals, ignore_nan=True)    
+		med_galaxy = np.nanmedian(galaxy) #this will stand in for signal probably will be ~1
+		SN_wMadStandardDev = med_galaxy/mad_std_residuals 
+		print('S/N w/ mad_std: '+str(SN_wMadStandardDev))
+
+		vel_comp0 = param0[0][0]
+		vel_error_comp0 = error[0][0]*np.sqrt(pp.chi2)
+		sig_comp0 = param0[0][1]
+		sig_error_comp0 = error[0][1]*np.sqrt(pp.chi2)
 
 
-				# kinematic constraints
-				if ngas_comp == 2: #constraint to ensure the first component is more narrow than the second for balmer and non-balmer lines
-					#moments will be: [-2, 2, 2, 2, 2]
-					#start will be: [[vstar, vsigma], [v1_1, sigma1_1], [v2_1, sigma2_1], [v1_2, sigma1_2], [v2_2, sigma2_2]]
-					#we want sigma1_2 > sigma1_1 AND sigma2_2 > sigma_2_1
-					A_ineq = [[0,0, 0,1, 0,0, 0,-1, 0,0],  #sigma1_1 - sigma1_2 <= 0
-							  [0,0, 0,0, 0,1, 0,0,  0,-1]] #sigma2_1 - sigma2_2 <= 0
-					b_ineq = [1e-5, 1e-5]
+		gas_bestfit = pp.gas_bestﬁt
+		stellar_fit = bestfit - gas_bestfit
 
-					if single_gascomp == True:
-						#moments will be: [-2, 2, 2]
-						#start will be: [[vstar, vsigma], [v1, sigma1], [v2, sigma2]]
-						#we want sigma1_2 > sigma1_1 AND sigma2_2 > sigma_2_1
-						A_ineq = [[0,0, 0,1, 0,-1]]  #sigma1 - sigma2 <= 0
-						b_ineq = [1e-5]
+		gas_templates_fit = pp.gas_bestfit_templates
 
-					#constr_kinem = {"A_ineq":A_ineq, "b_ineq":b_ineq}
-					constr_kinem = None #disable above constraints
-				else:
-					constr_kinem = None
+		param1 = pp.gas_flux
+		param2 = pp.gas_flux_error
 
-				
-				#use previous fit path to locate previous optimal templates file
+		wave_unexp = np.exp(logLam)
+		Halpha_anr = ANR(None, 'Halpha_(1)', Ha, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
 
+		if plot_every > 0 and bn % plot_every == 0:
+			output_ppxf_fit_plot(plot_name, pp, good_pixels, logLam, vel_comp0, z, ncomp_final, n_spec,
+								bn, mad_std_residuals, SN_wMadStandardDev, fit_gas=True)
 
-				opt_temp = prev_temps[:,bn]
+		if Halpha_anr >=8:
 
-				# Combines the stellar and gaseous templates into a single array.
-				# During the PPXF fit they will be assigned a different kinematic COMPONENT value
+			KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_anr, logLam, z, ncomp_final, n_spec, saveplot=True)
 
-				templates = np.column_stack([opt_temp, gas_templates_tile])
+			if KS_result.pvalue < 0.01:
+				refit_2comp = True #re-fit with 2 components
 
-			else:
-				start_vals = [galv, 25]
-				start = start_vals
+		if refit_2comp == True:
+
+			if prev_vel_2comp_1 is not None: #if there was an immediately preceeding successful fit
+				start = [[prev_vel_2comp_1, prev_sig_2comp_1], [prev_vel_2comp_2, prev_sig_2comp_2]]
+				bounds = [[prev_vel_2comp_1 - 50, prev_vel_2comp_1 + 50], [prev_sig_2comp_1 - 50, prev_sig_2comp_1 + 50], 
+						[prev_vel_2comp_2 - 50, prev_vel_2comp_2 + 50], [prev_sig_2comp_2 - 50, prev_sig_2comp_2 + 50]] #should have bounds if we have a previous fit
+
+			else: #use starting value from 1 component fit
+
+				start_vals = [galv, 150]
 				bounds = None
 
-			templates /= np.median(templates)
-
-			### take mean of spectra
-			gal_lin = np.nansum(spectra, axis=1)/n_spec
-			noise_lin = np.sqrt(np.nansum(np.abs(err_spectra), axis=1))/n_spec #add error spectra in quadrature, err is variance so no need to square
-
-			#noise_lin = noise_lin/np.nanmedian(noise_lin)
-			noise_lin[np.isinf(noise_lin)] = np.nanmedian(noise_lin)
-			noise_lin[noise_lin == 0] = np.nanmedian(noise_lin)
-
-			galaxy, logLam, velscale = util.log_rebin(wave_trunc_range, gal_lin)
-			#log_noise, logLam_noise, velscale_noise = util.log_rebin(lamRange, noise_lin) # I don't think this needs to be log-rebinned also
-
-			maskreg = (5880,5950) #galactic and extragalactic NaD in this window, observed wavelength
-			reg1 = np.where(np.exp(logLam) < maskreg[0])
-			reg2 = np.where(np.exp(logLam) > maskreg[1])
-			good_pixels = np.concatenate((reg1, reg2), axis=1)
-			good_pixels = good_pixels.reshape(good_pixels.shape[1])
-
-			if fit_gas == False:
-				goodpix_util = custom_util.determine_goodpixels(logLam, lamRange_temp, z) #uses z to get redshifted line wavelengths, so logLam should be observer frame
-				good_pix_total = np.intersect1d(goodpix_util, good_pixels)
-			else:
-				good_pix_total = good_pixels
-
-
-			#CALLING PPXF HERE!
-			t = clock()
-			pp = ppxf(templates, galaxy, noise_lin, velscale, start,
-						plot=False, moments=moments, degree= adegree, mdegree=mdegree, vsyst=dv,
-						clean=False, lam=np.exp(logLam)/(1+z), #regul= 1/0.1 , reg_dim=reg_dim,
-						component=component, gas_component=gas_component, bounds=bounds, constr_kinem=constr_kinem,
-						gas_names=gas_names, goodpixels = good_pix_total, global_search=globsearch)
+			ncomp = 2
+			pp = fit_emission_lines(templates_2comp, galaxy, noise_lin, velscale, start,
+									moments, adegree, mdegree, ncomp,
+									dv, lam, bounds, gas_names, good_pix_total, globsearch=False)
 
 			bestfit = pp.bestﬁt
 			residuals = galaxy - bestfit
@@ -701,157 +753,141 @@ def ppxf_fit_gas(cube, error_cube, vorbin_path, moments, adegree, mdegree, wave_
 			mad_std_residuals = mad_std(residuals, ignore_nan=True)    
 			med_galaxy = np.nanmedian(galaxy) #this will stand in for signal probably will be ~1
 			SN_wMadStandardDev = med_galaxy/mad_std_residuals 
-			save_dict['SN_mad_STD'].append(SN_wMadStandardDev)
+			
 			print('S/N w/ mad_std: '+str(SN_wMadStandardDev))
 
-			if fit_gas == False:
-				vel_comp0 = param0[0]
-				vel_error_comp0 = error[0]*np.sqrt(pp.chi2)
-				sig_comp0 = param0[1]
-				sig_error_comp0 = error[1]*np.sqrt(pp.chi2)
-
-				optimal_template = templates @ pp.weights
-				optimal_templates_save[:,bn] = optimal_template
-
-			else:
-				vel_comp0 = param0[0][0]
-				vel_error_comp0 = error[0][0]*np.sqrt(pp.chi2)
-				sig_comp0 = param0[0][1]
-				sig_error_comp0 = error[0][1]*np.sqrt(pp.chi2)
+			vel_comp0 = param0[0][0]
+			vel_error_comp0 = error[0][0]*np.sqrt(pp.chi2)
+			sig_comp0 = param0[0][1]
+			sig_error_comp0 = error[0][1]*np.sqrt(pp.chi2)
 
 
-			save_dict['star_vel'].append(vel_comp0) 
-			save_dict['star_vel_error'].append(vel_error_comp0)
-			save_dict['star_sig'].append(sig_comp0)
-			save_dict['star_sig_error'].append(sig_error_comp0)
+			gas_bestfit = pp.gas_bestﬁt
+			stellar_fit = bestfit - gas_bestfit
 
+			gas_templates_fit = pp.gas_bestfit_templates
 
-			if fit_gas == True:
-				gas_bestfit = pp.gas_bestﬁt
-				stellar_fit = bestfit - gas_bestfit
-
-				gas_templates_fit = pp.gas_bestfit_templates
-
-				param1 = pp.gas_flux
-				param2 = pp.gas_flux_error
-
-
-				if single_gascomp == False:
-					for num in np.arange(1,ngas_comp+1):
-						ind = num*2 - 1
-						vel_comp1 = param0[ind][0]
-						vel_error_comp1 = error[ind][0]*np.sqrt(pp.chi2)
-						sig_comp1 = param0[ind][1]
-						sig_error_comp1 = error[ind][1]*np.sqrt(pp.chi2)
-
-						vel_comp2 = param0[ind+1][0]
-						vel_error_comp2 = error[ind+1][0]*np.sqrt(pp.chi2)
-						sig_comp2 = param0[ind+1][1]
-						sig_error_comp2 = error[ind+1][1]*np.sqrt(pp.chi2)
-
-						save_dict[f'balmer_({num})_vel'].append(vel_comp1)
-						save_dict[f'balmer_({num})_vel_error'].append(vel_error_comp1)
-						save_dict[f'balmer_({num})_sig'].append(sig_comp1)
-						save_dict[f'balmer_({num})_sig_error'].append(sig_error_comp1)
-
-						save_dict[f'forbidden_({num})_vel'].append(vel_comp2)
-						save_dict[f'forbidden_({num})_vel_error'].append(vel_error_comp1)
-						save_dict[f'forbidden_({num})_sig'].append(sig_comp2)
-						save_dict[f'forbidden_({num})_sig_error'].append(sig_error_comp1)
-
-				elif single_gascomp == True:
-					for num in range(1, ngas_comp+1):
-						vel_comp1 = param0[num][0]
-						vel_error_comp1 = error[num][0]*np.sqrt(pp.chi2)
-						sig_comp1 = param0[num][1]
-						sig_error_comp1 = error[num][1]*np.sqrt(pp.chi2)
-
-						save_dict[f'gas_({num})_vel'].append(vel_comp1)
-						save_dict[f'gas_({num})_vel_error'].append(vel_error_comp1)
-						save_dict[f'gas_({num})_sig'].append(sig_comp1)
-						save_dict[f'gas_({num})_sig_error'].append(sig_error_comp1)
-
-				wave_unexp = np.exp(logLam)
-
-				Halpha_ANR = ANR(None, 'Halpha_(1)', Ha, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
-
-				for idx, ggas in enumerate(gas_names):
-					ncomp_num = ggas[-2]
-					gas_name = ggas[:-4]
-
-					gas_temp_idx = gas_templates_fit[:,idx]
-
-					if gas_name == 'HeI5876':
-						continue
-					save_dict[ggas+'_flux'].append(param1[idx])
-					save_dict[ggas+'_flux_error'].append(param2[idx])
-					save_dict[ggas+'_comp_amp'].append(np.nanmax(gas_temp_idx))
-
-					if single_gascomp == True:
-						vel_comp_bl = save_dict[f'gas_({ncomp_num})_vel'][-1]
-						vel_comp_fb = save_dict[f'gas_({ncomp_num})_vel'][-1]
-					else:
-						vel_comp_bl = save_dict[f'balmer_({num})_vel'][-1]
-						vel_comp_fb = save_dict[f'forbidden_({num})_vel'][-1]
-
-					if gas_name == 'Hbeta':
-						emline = Hb
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_bl)
-					if gas_name == 'Halpha':
-						emline = Ha
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_bl)
-						print('A/rN of Halpha: '+str(save_dict['Halpha_(1)_ANR'][-1]))
-					if gas_name == '[SII]6731_d1':
-						emline = SII1
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-					if gas_name == '[SII]6731_d2':
-						emline = SII2
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-					if gas_name == '[OIII]5007_d':
-						emline = OIII
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-					if gas_name == '[OI]6300_d':
-						emline = OI
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-					if gas_name == '[NII]6583_d':
-						emline = NII
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-						emline2 = NII1
-						ANR(save_dict, f'[NII]6548_({ncomp_num})', emline2, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb) 
-					if gas_name == '[NI]5201':
-						emline = NI
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-					if gas_name == '[NII]5756':
-						emline = NII5756
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-					if gas_name == '[OII]7322':
-						emline = OII1
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-					if gas_name == '[OII]7333':
-						emline = OII2
-						ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
-
-			fit_chisq = (pp.chi2 - 1)*galaxy.size
-			print('============================================================================')
-			print('Desired Delta Chi^2: %.4g' % np.sqrt(2*galaxy.size))
-			print('Current Delta Chi^2: %.4g' % (fit_chisq))
-			print('Elapsed time in PPXF: %.2f s' % (clock() - t))
-			print('============================================================================')
-
+			param1 = pp.gas_flux
+			param2 = pp.gas_flux_error
 
 			if plot_every > 0 and bn % plot_every == 0:
+				output_ppxf_fit_plot(plot_name, pp, good_pixels, logLam, vel_comp0, z, ncomp_final, n_spec,
+									bn, mad_std_residuals, SN_wMadStandardDev, fit_gas=True)
 
-				output_ppxf_fit_plot(plot_name, pp, good_pix_total, logLam, vel_comp0, z, ngas_comp, 
-									n_spec, bn, mad_std_residuals, SN_wMadStandardDev, fit_gas)
+			OI_anr = ANR(None, 'OI_(1)', OI, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
+			SII_anr = ANR(None, 'SII_(1)', SII1, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
+			OIII_anr = ANR(None, 'OIII_(1)', SII1, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
 
-				if test_residuals == True:
-					KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_ANR, logLam, z, ngas_comp, n_spec, saveplot=True)
+			if Halpha_anr >= 10:
+				KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_anr, logLam, z, ncomp_final, n_spec, saveplot=True)
+				KS_result = residual_fit_test(plot_name, pp, residuals, bn, OI_anr, logLam, z, ncomp_final, n_spec, saveplot=True, line_region='OI')
+				KS_result = residual_fit_test(plot_name, pp, residuals, bn, SII_anr, logLam, z, ncomp_final, n_spec, saveplot=True, line_region='SII')
+				KS_result = residual_fit_test(plot_name, pp, residuals, bn, OIII_anr, logLam, z, ncomp_final, n_spec, saveplot=True, line_region='OIII')
 
-	if fit_gas == True:
-		return save_dict
-	else:
-		return save_dict, optimal_templates_save
 
+		save_dict['SN_mad_STD'].append(SN_wMadStandardDev)
+		save_dict['star_vel'].append(vel_comp0) 
+		save_dict['star_vel_error'].append(vel_error_comp0)
+		save_dict['star_sig'].append(sig_comp0)
+		save_dict['star_sig_error'].append(sig_error_comp0)
+		save_dict['chisq/dof'].append(pp.chi2)
+
+		fit_chisq = (pp.chi2 - 1)*galaxy.size
+
+		#fit gas saving parameters
+		gas_bestfit = pp.gas_bestﬁt
+		stellar_fit = bestfit - gas_bestfit
+
+		gas_templates_fit = pp.gas_bestfit_templates
+
+		param1 = pp.gas_flux
+		param2 = pp.gas_flux_error
+
+
+		for num in range(1, ngas_comp+1):
+			vel_comp1 = param0[num][0]
+			vel_error_comp1 = error[num][0]*np.sqrt(pp.chi2)
+			sig_comp1 = param0[num][1]
+			sig_error_comp1 = error[num][1]*np.sqrt(pp.chi2)
+
+			save_dict[f'gas_({num})_vel'].append(vel_comp1)
+			save_dict[f'gas_({num})_vel_error'].append(vel_error_comp1)
+			save_dict[f'gas_({num})_sig'].append(sig_comp1)
+			save_dict[f'gas_({num})_sig_error'].append(sig_error_comp1)
+
+		wave_unexp = np.exp(logLam)
+
+		Halpha_ANR = ANR(None, 'Halpha_(1)', Ha, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
+
+		for idx, ggas in enumerate(gas_names):
+			ncomp_num = ggas[-2]
+			gas_name = ggas[:-4]
+
+			gas_temp_idx = gas_templates_fit[:,idx]
+
+			if gas_name == 'HeI5876':
+				continue
+			save_dict[ggas+'_flux'].append(param1[idx])
+			save_dict[ggas+'_flux_error'].append(param2[idx])
+			save_dict[ggas+'_comp_amp'].append(np.nanmax(gas_temp_idx))
+
+			if single_gascomp == True:
+				vel_comp_bl = save_dict[f'gas_({ncomp_num})_vel'][-1]
+				vel_comp_fb = save_dict[f'gas_({ncomp_num})_vel'][-1]
+			else:
+				vel_comp_bl = save_dict[f'balmer_({num})_vel'][-1]
+				vel_comp_fb = save_dict[f'forbidden_({num})_vel'][-1]
+
+			if gas_name == 'Hbeta':
+				emline = Hb
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_bl)
+			if gas_name == 'Halpha':
+				emline = Ha
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_bl)
+				print('A/rN of Halpha: '+str(save_dict['Halpha_(1)_ANR'][-1]))
+			if gas_name == '[SII]6731_d1':
+				emline = SII1
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+			if gas_name == '[SII]6731_d2':
+				emline = SII2
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+			if gas_name == '[OIII]5007_d':
+				emline = OIII
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+			if gas_name == '[OI]6300_d':
+				emline = OI
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+			if gas_name == '[NII]6583_d':
+				emline = NII
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+				emline2 = NII1
+				ANR(save_dict, f'[NII]6548_({ncomp_num})', emline2, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb) 
+			if gas_name == '[NI]5201':
+				emline = NI
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+			if gas_name == '[NII]5756':
+				emline = NII5756
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+			if gas_name == '[OII]7322':
+				emline = OII1
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+			if gas_name == '[OII]7333':
+				emline = OII2
+				ANR(save_dict, ggas, emline, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp_fb)
+		print('============================================================================')
+		print('Desired Delta Chi^2: %.4g' % np.sqrt(2*galaxy.size))
+		print('Current Delta Chi^2: %.4g' % (fit_chisq))
+		print('Elapsed time in PPXF: %.2f s' % (clock() - t))
+		print('============================================================================')
+
+
+		if plot_every > 0 and bn % plot_every == 0:
+
+			output_ppxf_fit_plot(plot_name, pp, good_pix_total, logLam, vel_comp0, z, 0, 
+								bn, mad_std_residuals, SN_wMadStandardDev, fit_gas=False)
+
+
+	return save_dict, optimal_templates_save
 
 
 
@@ -1353,7 +1389,7 @@ def ppxf_iterative_fit(cube, error_cube, vorbin_path, adegree, mdegree, wave_lam
 	return save_dict
 
 
-def run_stellar_fit(runID, cube_path, prev_vmap_path=None, plot_every=0):
+def run_stellar_fit(runID, cube_path, prev_vmap_path=None, plot_every=0, individual_bin=None):
 	#run stellar fit, optionally also fit gas or mask it out
 	#runID - name identifier for the run (e.g. Nov25_1comp)
 	#cube_path - path to data cube
@@ -1381,7 +1417,7 @@ def run_stellar_fit(runID, cube_path, prev_vmap_path=None, plot_every=0):
 	csv_save_name = f'{gal_out_dir}stellarfit_{runID}_nobin.csv'
 
 	run_dict, opt_temps_save = ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam,
-						plot_every=plot_every, plot_name=plot_name, prev_vmap_path=prev_vmap_path)
+						plot_every=plot_every, plot_name=plot_name, prev_vmap_path=prev_vmap_path, individual_bin=individual_bin)
 	run_dict_df = pd.DataFrame.from_dict(run_dict)
 	run_dict_df.to_csv(csv_save_name, index=False, header=True)
 
@@ -1490,6 +1526,7 @@ def run_iterative_gas_fit(runID, cube_path, vorbin_path, prev_fit_path, plot_eve
 cube_path = "../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
 prev_vmap_path = '/Users/jotter/highres_PSBs/ngc1266_data/MUSE/maps/ngc1266_ppxf_Feb23_iter_gs_maps.fits'
 run_id_stellar = 'Mar23'
+individual_bin = 3208
 
 run_stellar_fit(run_id_stellar, cube_path, prev_vmap_path=prev_vmap_path, plot_every=100)
 
