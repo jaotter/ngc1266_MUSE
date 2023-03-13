@@ -879,6 +879,12 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 					e_vel_comp2 = error[1][0]*np.sqrt(pp.chi2)
 					e_sig_comp2 = error[1][1]*np.sqrt(pp.chi2)
 
+				else:
+					vel_comp2 = param0[2][0]
+					sig_comp2 = param0[2][1]
+					e_vel_comp2 = error[2][0]*np.sqrt(pp.chi2)
+					e_sig_comp2 = error[2][1]*np.sqrt(pp.chi2)
+
 			save_dict[f'gas_(2)_vel'].append(vel_comp2)
 			save_dict[f'gas_(2)_vel_error'].append(e_vel_comp2)
 			save_dict[f'gas_(2)_sig'].append(sig_comp2)
@@ -1065,7 +1071,7 @@ cube_path = "../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
 prev_vmap_path = '/Users/jotter/highres_PSBs/ngc1266_data/MUSE/maps/ngc1266_ppxf_Feb23_iter_gs_maps.fits'
 run_id_stellar = 'Mar23'
 individual_bin = 5900
-run_id_gas = 'Mar23_nobin_nobounds_2'
+run_id_gas = 'Mar23_nobin_nobounds_3'
 
 #run_stellar_fit(run_id_stellar, cube_path, prev_vmap_path=prev_vmap_path, plot_every=100)
 run_gas_fit(run_id_gas, cube_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}_nobin.csv', plot_every=100)
