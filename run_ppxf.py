@@ -14,7 +14,7 @@ import ppxf_custom_util as custom_util
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from astropy.stats import mad_std
+from astropy.stats import mad_std, bayesian_info_criterion_lsq
 from scipy.stats import kstest, norm
 import pandas as pd
 
@@ -536,7 +536,7 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 	gas_component_1 = np.array(component_1) > 0  # gas_component=True for gas 
 	gas_component_2 = np.array(component_2) > 0  # gas_component=True for gas 
 
-	moments_1 = [-2, 2]
+	moments_1 = [-2, 2] #negative means kinematics are fixed
 	moments_2 = [-2, 2, 2]
 
 	for num in range(1, ngas_comp+1):
@@ -544,6 +544,8 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 		save_dict[f'gas_({num})_vel_error'] = []
 		save_dict[f'gas_({num})_sig'] = []
 		save_dict[f'gas_({num})_sig_error'] = []
+
+		save_dict[f'gas_({num})_vel_start'] = [] #add starting velocity column
 
 	for ggas in gas_names:
 		ncomp_num = ggas[-2]
@@ -573,7 +575,7 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 	dv = c*(np.log(lam_temp[0]/wave_trunc[0])) # eq.(8) of Cappellari (2017)
 
 	prev_vel_1comp = None
-	prev_vel_2comp_1 = None
+	#prev_vel_2comp_1 = None
 
 	loop_list = np.unique(binNum)
 	if individual_bin is not None:
@@ -604,12 +606,12 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 		prev_stell_start = [prev_stellar_vel, prev_stellar_sig]
 
 		if prev_vel_1comp is not None: #if there was an immediately preceeding successful fit
-			start = [prev_stell_start, [prev_vel_1comp, prev_sig_1comp]]
+			start_1comp = [prev_stell_start, [prev_vel_1comp, prev_sig_1comp]]
 			#bounds = [[[prev_stellar_vel-5, prev_stellar_vel+5], [prev_stellar_sig-5, prev_stellar_sig+5]], [[prev_vel_1comp - 50, prev_vel_1comp + 50], [20,1000]]] #should have bounds if we have a previous fit
 			bounds = None
 
 		else:
-			start = [prev_stell_start, [prev_stellar_vel, 150]]
+			start_1comp = [prev_stell_start, [prev_stellar_vel, 150]]
 			bounds = None
 
 	
@@ -649,7 +651,7 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 		#CALLING PPXF HERE!
 		t = clock()
 
-		pp = ppxf(templates_1comp, galaxy, noise_lin, velscale, start,
+		pp = ppxf(templates_1comp, galaxy, noise_lin, velscale, start_1comp,
 				plot=False, moments=moments_1, degree= adegree, mdegree=mdegree, vsyst=dv,
 				clean=False, lam=lam,
 				component=component_1, gas_component=gas_component_1, bounds=bounds,
@@ -690,16 +692,11 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 			save_plots = False
 
 		refit_2comp = False
+
 		if Halpha_anr >=8:
-
-			KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_anr, logLam, z, ncomp, saveplot=save_plots)
-
-			if KS_result.pvalue < 0.01:
-				refit_2comp = True #re-fit with 2 components
-
+			refit_2comp = True
 
 		if refit_2comp == True:
-
 			ncomp_final = 2
 
 			'''if prev_vel_2comp_1 is not None: #if there was an immediately preceeding successful fit
@@ -714,7 +711,7 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 			#check pixels nearby
 			above_bin = binNum[y_loc-1, x_loc][0]
 			prev_bin = bn - 1
-			bins_to_check = [above_bin+2, above_bin-2, above_bin+1, above_bin-1, above_bin, prev_bin, prev_bin-1]
+			bins_to_check = [above_bin+1, above_bin-1, above_bin, prev_bin]
 
 			prev_vel_2comp_1_list = []
 			prev_vel_2comp_2_list = []
@@ -737,9 +734,20 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 					prev_sig_2comp_2 = np.median(prev_sig_2comp_2_list)
 
 					start = [prev_stell_start, [prev_vel_2comp_1, prev_sig_2comp_1], [prev_vel_2comp_2, prev_sig_2comp_2]]
-					#bounds = [[[prev_stellar_vel-5, prev_stellar_vel+5], [prev_stellar_sig-5, prev_stellar_sig+5]], [[prev_vel_2comp_1 - 75, prev_vel_2comp_1 + 75],
-					#				[prev_sig_2comp_1 - 25, prev_sig_2comp_1 + 25]], [[prev_vel_2comp_2 - 75, prev_vel_2comp_2 + 75], [prev_sig_2comp_2 - 25, prev_sig_2comp_2 + 25]]]
-					bounds = None
+					vel_min_1 = np.nanmin(prev_vel_2comp_1_list)
+					vel_max_1 = np.nanmax(prev_vel_2comp_1_list)
+					vel_min_2 = np.nanmin(prev_vel_2comp_2_list)
+					vel_max_2 = np.nanmax(prev_vel_2comp_2_list)
+
+					sig_min_1 = np.nanmin(prev_sig_2comp_1_list)
+					sig_max_1 = np.nanmax(prev_sig_2comp_1_list)
+					sig_min_2 = np.nanmin(prev_sig_2comp_2_list)
+					sig_max_2 = np.nanmax(prev_sig_2comp_2_list)
+
+					#bounds = [[[prev_stellar_vel-5, prev_stellar_vel+5], [prev_stellar_sig-5, prev_stellar_sig+5]], [[vel_min_1 - 50, vel_max_1 + 50],
+					#				[sig_min_1 - 50, sig_max_1 + 50]], [[vel_min_2 - 50, vel_max_2 + 50], [sig_min_2 - 50, sig_max_2 + 50]]]
+					
+					#bounds = None
 
 			else: #above pixels don't have 2 component fit either, so use starting value from 1 component fit
 
@@ -751,12 +759,15 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 				start = np.array((prev_stell_start, prev_fit_start_1, prev_fit_start_2)) #first 2 are stellar and first gas, then add extra
 				bounds = None
 
+			residuals_1comp = residuals
+			pp_1comp = pp
+
 			ncomp = 2
 			pp = ppxf(templates_2comp, galaxy, noise_lin, velscale, start,
 					plot=False, moments=moments_2, degree= adegree, mdegree=mdegree, vsyst=dv,
 					clean=False, lam=lam,
 					component=component_2, gas_component=gas_component_2, bounds=bounds,
-					gas_names=gas_names, goodpixels = good_pix_total, global_search=False)
+					gas_names=gas_names, goodpixels = good_pix_total)
 
 			bestfit = pp.bestﬁt
 			residuals = galaxy - bestfit
@@ -784,25 +795,40 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 			param1 = pp.gas_flux
 			param2 = pp.gas_flux_error
 
+			ssr_2comp = np.nansum(np.power(residuals,2))
+			bic_2comp = bayesian_info_criterion_lsq(ssr_2comp, 6, galaxy.shape[0])
+
+			ssr_1comp = np.nansum(np.power(residuals_1comp,2))
+			bic_1comp = bayesian_info_criterion_lsq(ssr_1comp, 3, galaxy.shape[0])
+
+			delta_bic = bic_1comp - bic_2comp
+
+			if delta_bic > 10:
+				ncomp_final = 2
+
+			else:
+				ncomp_final = 1
+				pp = pp_1comp
+
 			if save_plots == True:
 				output_ppxf_fit_plot(plot_name, pp, good_pixels, logLam, vel_comp0, z, ncomp,
 									bn, mad_std_residuals, SN_wMadStandardDev, fit_gas=True)
 
 			#OI_anr = ANR(None, 'OI_(1)', OI, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
 			#SII_anr = ANR(None, 'SII_(1)', SII1, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
-			OIII_anr = ANR(None, 'OIII_(1)', SII1, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
+			#OIII_anr = ANR(None, 'OIII_(1)', SII1, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
 
 
-			if plot_every > 0 and bn % 10 == 0:
-				KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_anr, logLam, z, ncomp_final, saveplot=True)
-				#KS_result = residual_fit_test(plot_name, pp, residuals, bn, OI_anr, logLam, z, ncomp_final, saveplot=save_plots, line_region='OI')
-				#	KS_result = residual_fit_test(plot_name, pp, residuals, bn, SII_anr, logLam, z, ncomp_final, saveplot=True, line_region='SII')
-				KS_result = residual_fit_test(plot_name, pp, residuals, bn, OIII_anr, logLam, z, ncomp_final, saveplot=True, line_region='OIII')
+			#if plot_every > 0 and bn % 5 == 0:
+			#	KS_result = residual_fit_test(plot_name, pp, residuals, bn, Halpha_anr, logLam, z, ncomp_final, saveplot=True)
+			#	KS_result = residual_fit_test(plot_name, pp, residuals, bn, OIII_anr, logLam, z, ncomp_final, saveplot=True, line_region='OIII')
+
+
 
 		else:
 			ncomp_final = 1
 
-
+		#saving stellar parameters
 		save_dict['SN_mad_STD'].append(SN_wMadStandardDev)
 		save_dict['star_vel'].append(vel_comp0) 
 		save_dict['star_vel_error'].append(vel_error_comp0)
@@ -826,6 +852,8 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 		e_vel_comp1 = error[1][0]*np.sqrt(pp.chi2)
 		e_sig_comp1 = error[1][1]*np.sqrt(pp.chi2)
 
+		stell_vel = param0[0][0]
+
 		if ncomp_final == 1: #if only did 1 comp fit
 			save_dict[f'gas_(2)_vel'].append(np.nan)
 			save_dict[f'gas_(2)_vel_error'].append(np.nan)
@@ -835,18 +863,25 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 			prev_vel_1comp = vel_comp1
 			prev_sig_1comp = sig_comp1
 
-			prev_vel_2comp_1 = None
-			prev_sig_2comp_1 = None
-			prev_vel_2comp_2 = None
-			prev_sig_2comp_2 = None
+			#prev_vel_2comp_1 = None
+			#prev_sig_2comp_1 = None
+			#prev_vel_2comp_2 = None
+			#prev_sig_2comp_2 = None
+
+			save_dict[f'gas_(1)_vel_start'].append(start_1comp[1][0])
+			save_dict[f'gas_(2)_vel_start'].append(np.nan)
+
 
 		elif ncomp_final == 2: #did a 2 component fit
 
-			if no_prev_fit == False:
-				vel_comp2 = param0[2][0]
+			vel_comp2 = param0[2][0]
+			sig_comp2 = param0[2][1]
 
+			if no_prev_fit == False: #there is a previous fit
+				
 				#check if components got swapped
-				if np.abs(prev_vel_2comp_1 - vel_comp1) > np.abs(prev_vel_2comp_1 - vel_comp2):
+				if sig_comp1 > sig_comp2: #np.abs(prev_vel_2comp_1 - vel_comp1) > np.abs(prev_vel_2comp_1 - vel_comp2):
+					#they are swapped
 					vel_comp1 = param0[2][0]
 					sig_comp1 = param0[2][1]
 					e_vel_comp1 = error[2][0]*np.sqrt(pp.chi2)
@@ -864,10 +899,8 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 					e_sig_comp2 = error[2][1]*np.sqrt(pp.chi2)
 
 			elif no_prev_fit == True: #if no previous fit, then check which component is closer to stellar velocity, and set it to comp 1
-				vel_comp2 = param0[2][0]
-				stell_vel = param0[0][0]
 
-				if np.abs(vel_comp1 - stell_vel) > np.abs(vel_comp2 - stell_vel):
+				if sig_comp1 > sig_comp2: #np.abs(vel_comp1 - stell_vel) > np.abs(vel_comp2 - stell_vel):
 					# comp 2 is closer to stellar velocity, switch velocity components
 					vel_comp1 = param0[2][0]
 					sig_comp1 = param0[2][1]
@@ -890,10 +923,13 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 			save_dict[f'gas_(2)_sig'].append(sig_comp2)
 			save_dict[f'gas_(2)_sig_error'].append(e_sig_comp2)
 
-			prev_vel_2comp_1 = vel_comp1
-			prev_sig_2comp_1 = sig_comp1
-			prev_vel_2comp_2 = vel_comp2
-			prev_sig_2comp_2 = sig_comp2
+			save_dict[f'gas_(1)_vel_start'].append(start[1][0])
+			save_dict[f'gas_(2)_vel_start'].append(start[2][0])
+
+			#prev_vel_2comp_1 = vel_comp1
+			#prev_sig_2comp_1 = sig_comp1
+			#prev_vel_2comp_2 = vel_comp2
+			#prev_sig_2comp_2 = sig_comp2
 
 			prev_vel_1comp = vel_comp1
 			prev_sig_1comp = sig_comp1
@@ -903,7 +939,6 @@ def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=Tr
 		save_dict[f'gas_(1)_vel_error'].append(e_vel_comp1)
 		save_dict[f'gas_(1)_sig'].append(sig_comp1)
 		save_dict[f'gas_(1)_sig_error'].append(e_sig_comp1)
-
 
 		wave_unexp = np.exp(logLam)
 		Halpha_ANR = ANR(None, 'Halpha_(1)', Ha, wave_unexp, gas_bestfit, mad_std_residuals, vel_comp0)
@@ -1070,11 +1105,11 @@ def run_gas_fit(runID, cube_path, prev_fit_path, plot_every=0, individual_bin=No
 cube_path = "../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
 prev_vmap_path = '/Users/jotter/highres_PSBs/ngc1266_data/MUSE/maps/ngc1266_ppxf_Feb23_iter_gs_maps.fits'
 run_id_stellar = 'Mar23'
-individual_bin = 5900
-run_id_gas = 'Mar23_nobin_nobounds_3'
+#individual_bin = 5900
+run_id_gas = 'Jul24_width'
 
 #run_stellar_fit(run_id_stellar, cube_path, prev_vmap_path=prev_vmap_path, plot_every=100)
-run_gas_fit(run_id_gas, cube_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}_nobin.csv', plot_every=100)
+run_gas_fit(run_id_gas, cube_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}_nobin.csv', plot_every=1000)
 
 #run_iterative_gas_fit(run_id_gas, cube_path, vorbin_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}.csv', plot_every=100,
 #					single_gascomp=True, globsearch=False, individual_bin=bin_num)
