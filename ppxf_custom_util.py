@@ -96,8 +96,8 @@ def determine_mask(ln_lam, lam_range_temp, z, width=800):
     :return: boolean vector mask to be used as input for pPXF
 
     """
-#                     -----[OII]-----    Hdelta   Hgamma   Hbeta   -----[OIII]-----   [NI]    [NII]   [OI]    -----[NII]-----   Halpha   -----[SII]-----    ----[OII]----
-    lines = np.array([3726.03, 3728.82, 4101.76, 4340.47, 4861.33, 4958.92, 5006.84, 5201.7, 5756.2, 6300.30, 6548.03, 6583.41, 6562.80, 6716.47, 6730.85, 7322.0, 7332.75])
+#                     -----[OII]-----    Hdelta   Hgamma   Hbeta   -----[OIII]-----   [NI]    [NII]   [OI]      [OI]    -----[NII]-----   Halpha   -----[SII]-----    ----[OII]----
+    lines = np.array([3726.03, 3728.82, 4101.76, 4340.47, 4861.33, 4958.92, 5006.84, 5201.7, 5756.2, 6300.30, 6365.536, 6548.03, 6583.41, 6562.80, 6716.47, 6730.85, 7322.0, 7332.75])
     dv = np.full_like(lines, width)  # width/2 of masked gas emission region in km/s
     c = 299792.458 # speed of light in km/s
 

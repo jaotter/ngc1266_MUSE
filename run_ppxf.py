@@ -1109,7 +1109,7 @@ run_id_stellar = 'Mar23'
 run_id_gas = 'Jul24_width'
 
 #run_stellar_fit(run_id_stellar, cube_path, prev_vmap_path=prev_vmap_path, plot_every=100)
-run_gas_fit(run_id_gas, cube_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}_nobin.csv', plot_every=1000)
+run_gas_fit(run_id_gas, cube_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}_nobin.csv', plot_every=200)
 
 #run_iterative_gas_fit(run_id_gas, cube_path, vorbin_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}.csv', plot_every=100,
 #					single_gascomp=True, globsearch=False, individual_bin=bin_num)

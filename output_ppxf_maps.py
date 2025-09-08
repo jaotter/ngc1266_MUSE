@@ -17,7 +17,7 @@ stellar_file = 'stellarfit_Mar23_nobin.csv'
 stellar_tab = Table.read(ppxf_dir+stellar_file, format='csv')
 
 #load in gas fit
-gas_file = 'gasfit_Mar23_nobin_nobounds_2.csv'
+gas_file = 'gasfit_Jul24_width.csv'
 gas_tab = Table.read(ppxf_dir+gas_file, format='csv')
 
 #cube file for WCS info
@@ -29,6 +29,8 @@ cube_data = cube_fl[1].data
 cube_fl.close()
 
 wave = cube_header['CRVAL3']+(np.arange(0, cube_header['NAXIS3'])*cube_header['CD3_3'])
+spec_pix_size = np.median(np.diff(wave))
+
 
 z = 0.007214
 c = 299792.5
@@ -37,15 +39,19 @@ ngc1266_vel = c*z
 
 #turn table values into maps
 
-Ha_flux = np.full(binNum_2D.shape, np.nan)
-Nii_flux = np.full(binNum_2D.shape, np.nan)
-Oiii_flux = np.full(binNum_2D.shape, np.nan)
-Hb_flux = np.full(binNum_2D.shape, np.nan)
-Oi_flux = np.full(binNum_2D.shape, np.nan)
-Sii_flux = np.full(binNum_2D.shape, np.nan)
+Ha_flux_c1 = np.full(binNum_2D.shape, np.nan)
+Nii_flux_c1 = np.full(binNum_2D.shape, np.nan)
+Oiii_flux_c1 = np.full(binNum_2D.shape, np.nan)
+Hb_flux_c1 = np.full(binNum_2D.shape, np.nan)
+Oi_flux_c1 = np.full(binNum_2D.shape, np.nan)
+Sii_flux_c1 = np.full(binNum_2D.shape, np.nan)
 
-Ha_amplitude_1 = np.full(binNum_2D.shape, np.nan)
-Ha_amplitude_2 = np.full(binNum_2D.shape, np.nan)
+Ha_flux_c2 = np.full(binNum_2D.shape, np.nan)
+Nii_flux_c2 = np.full(binNum_2D.shape, np.nan)
+Oiii_flux_c2 = np.full(binNum_2D.shape, np.nan)
+Hb_flux_c2 = np.full(binNum_2D.shape, np.nan)
+Oi_flux_c2 = np.full(binNum_2D.shape, np.nan)
+Sii_flux_c2 = np.full(binNum_2D.shape, np.nan)
 
 stellar_vel = np.full(binNum_2D.shape, np.nan)
 stellar_sigma = np.full(binNum_2D.shape, np.nan)
@@ -53,6 +59,9 @@ gas_vel_c1 = np.full(binNum_2D.shape, np.nan)
 gas_vel_c2 = np.full(binNum_2D.shape, np.nan)
 gas_sig_c1 = np.full(binNum_2D.shape, np.nan)
 gas_sig_c2 = np.full(binNum_2D.shape, np.nan)
+
+gas_vel_start_c1 = np.full(binNum_2D.shape, np.nan)
+gas_vel_start_c2 = np.full(binNum_2D.shape, np.nan)
 
 Ha_snr = np.full(binNum_2D.shape, np.nan)
 
@@ -70,9 +79,20 @@ for bn in np.unique(binNum_2D):
     gas_vel_comp2 = gas_tab['gas_(2)_vel'][gas_tab_ind]
     gas_sig_comp1 = gas_tab['gas_(1)_sig'][gas_tab_ind]
     gas_sig_comp2 = gas_tab['gas_(2)_sig'][gas_tab_ind]
-    
+
     Ha_snr[bin_ind] = gas_tab['Halpha_(1)_ANR'][gas_tab_ind]
+
+    gas_vel_c1[bin_ind] = gas_vel_comp1
+    gas_vel_c2[bin_ind] = gas_vel_comp2
+    gas_sig_c1[bin_ind] = gas_sig_comp1
+    gas_sig_c2[bin_ind] = gas_sig_comp2
+
+
+    gas_vel_start_c1[bin_ind] = gas_tab['gas_(1)_vel_start'][gas_tab_ind]
+    gas_vel_start_c2[bin_ind] = gas_tab['gas_(2)_vel_start'][gas_tab_ind]
     
+
+
     '''#comp1_closer_vstar = np.abs(gas_vel_comp1 - vstar) < np.abs(gas_vel_comp2 - vstar)
                 #comp1_closer_1comp = np.abs(gas_vel_comp1 - gas_vel_1comp) < np.abs(gas_vel_comp2 - gas_vel_1comp)
                 comp1_closer_galvel = np.abs(gas_vel_comp1 - ngc1266_vel) < np.abs(gas_vel_comp2 - ngc1266_vel)
@@ -96,43 +116,79 @@ for bn in np.unique(binNum_2D):
                     gas_sig_c2[bin_ind] = np.nan'''
     
     if gas_tab['Halpha_(1)_ANR'][gas_tab_ind] > 3:
-        Ha_flux[bin_ind] = gas_tab['Halpha_(1)_flux'][gas_tab_ind]
+        Ha_flux_c1[bin_ind] = gas_tab['Halpha_(1)_flux'][gas_tab_ind] * spec_pix_size
     else:
-        Ha_flux[bin_ind] = np.nan
+        Ha_flux_c1[bin_ind] = np.nan
         
     if gas_tab['Hbeta_(1)_ANR'][gas_tab_ind] > 3:
-        Hb_flux[bin_ind] = gas_tab['Hbeta_(1)_flux'][gas_tab_ind]
+        Hb_flux_c1[bin_ind] = gas_tab['Hbeta_(1)_flux'][gas_tab_ind] * spec_pix_size
     else:
-        Hb_flux[bin_ind] = np.nan
+        Hb_flux_c1[bin_ind] = np.nan
         
     if gas_tab['[NII]6583_d_(1)_ANR'][gas_tab_ind] > 3:
-        Nii_flux[bin_ind] = gas_tab['[NII]6583_d_(1)_flux'][gas_tab_ind]
+        Nii_flux_c1[bin_ind] = gas_tab['[NII]6583_d_(1)_flux'][gas_tab_ind] * spec_pix_size
     else:
-        Nii_flux[bin_ind] = np.nan
+        Nii_flux_c1[bin_ind] = np.nan
         
     if gas_tab['[OIII]5007_d_(1)_ANR'][gas_tab_ind] > 3:
-        Oiii_flux[bin_ind] = gas_tab['[OIII]5007_d_(1)_flux'][gas_tab_ind]
+        Oiii_flux_c1[bin_ind] = gas_tab['[OIII]5007_d_(1)_flux'][gas_tab_ind] * spec_pix_size
     else:
-        Oiii_flux[bin_ind] = np.nan
+        Oiii_flux_c1[bin_ind] = np.nan
         
     if gas_tab['[OI]6300_d_(1)_ANR'][gas_tab_ind] > 3:
-        Oi_flux[bin_ind] = gas_tab['[OI]6300_d_(1)_flux'][gas_tab_ind]
+        Oi_flux_c1[bin_ind] = gas_tab['[OI]6300_d_(1)_flux'][gas_tab_ind] * spec_pix_size
     else:
-        Oi_flux[bin_ind] = np.nan
+        Oi_flux_c1[bin_ind] = np.nan
         
     if gas_tab['[SII]6731_d1_(1)_ANR'][gas_tab_ind] > 3:
-        Sii_flux[bin_ind] = (gas_tab['[SII]6731_d1_(1)_flux'][gas_tab_ind] + gas_tab['[SII]6731_d2_(1)_flux'][gas_tab_ind])
+        Sii_flux_c1[bin_ind] = (gas_tab['[SII]6731_d1_(1)_flux'][gas_tab_ind] + gas_tab['[SII]6731_d2_(1)_flux'][gas_tab_ind]) * spec_pix_size
     else:
-        Sii_flux[bin_ind] = np.nan
+        Sii_flux_c1[bin_ind] = np.nan
+
+
+    if gas_tab['Halpha_(2)_ANR'][gas_tab_ind] > 3:
+        Ha_flux_c2[bin_ind] = gas_tab['Halpha_(2)_flux'][gas_tab_ind] * spec_pix_size
+    else:
+        Ha_flux_c2[bin_ind] = np.nan
+        
+    if gas_tab['Hbeta_(2)_ANR'][gas_tab_ind] > 3:
+        Hb_flux_c2[bin_ind] = gas_tab['Hbeta_(2)_flux'][gas_tab_ind] * spec_pix_size
+    else:
+        Hb_flux_c2[bin_ind] = np.nan
+        
+    if gas_tab['[NII]6583_d_(2)_ANR'][gas_tab_ind] > 3:
+        Nii_flux_c2[bin_ind] = gas_tab['[NII]6583_d_(2)_flux'][gas_tab_ind] * spec_pix_size
+    else:
+        Nii_flux_c2[bin_ind] = np.nan
+        
+    if gas_tab['[OIII]5007_d_(2)_ANR'][gas_tab_ind] > 3:
+        Oiii_flux_c2[bin_ind] = gas_tab['[OIII]5007_d_(2)_flux'][gas_tab_ind] * spec_pix_size
+    else:
+        Oiii_flux_c2[bin_ind] = np.nan
+        
+    if gas_tab['[OI]6300_d_(2)_ANR'][gas_tab_ind] > 3:
+        Oi_flux_c2[bin_ind] = gas_tab['[OI]6300_d_(2)_flux'][gas_tab_ind] * spec_pix_size
+    else:
+        Oi_flux_c2[bin_ind] = np.nan
+        
+    if gas_tab['[SII]6731_d1_(2)_ANR'][gas_tab_ind] > 3:
+        Sii_flux_c2[bin_ind] = (gas_tab['[SII]6731_d1_(2)_flux'][gas_tab_ind] + gas_tab['[SII]6731_d2_(2)_flux'][gas_tab_ind]) * spec_pix_size
+    else:
+        Sii_flux_c2[bin_ind] = np.nan
             
         
-log_Ha_flux = np.log10(Ha_flux) + 20
-log_Hb_flux = np.log10(Hb_flux) + 20
-log_Nii_flux = np.log10(Nii_flux) + 20
-log_Oiii_flux = np.log10(Oiii_flux) + 20
-log_Sii_flux = np.log10(Sii_flux) + 20
-log_Oi_flux = np.log10(Oi_flux) + 20
-
+Ha_flux_c1 = Ha_flux_c1*1e20
+Ha_flux_c2 = Ha_flux_c2*1e20
+Hb_flux_c1 = Hb_flux_c1*1e20
+Hb_flux_c2 = Hb_flux_c2*1e20
+Nii_flux_c1 = Nii_flux_c1*1e20
+Nii_flux_c2 = Nii_flux_c2*1e20
+Oiii_flux_c1 = Oiii_flux_c1*1e20
+Oiii_flux_c2 = Oiii_flux_c2*1e20
+Oi_flux_c1 = Oi_flux_c1*1e20
+Oi_flux_c2 = Oi_flux_c2*1e20
+Sii_flux_c1 = Sii_flux_c1*1e20
+Sii_flux_c2 = Sii_flux_c2*1e20
 
 
 cube_file = '/Users/jotter/highres_PSBs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits'
@@ -150,7 +206,10 @@ cutout_size = [ybinrange[1] - ybinrange[0], xbinrange[1] - xbinrange[0]]
 cutout = Cutout2D(cube_slice, cent_pix, cutout_size, wcs=cube_wcs)
 
 maps_wcs = cutout.wcs
+
+maps_wcs.wcs.crpix = cutout_size[0]/2, cutout_size[1]/2
 maps_header = maps_wcs.to_header()
+
 
 #maps_header = fits.Header()
 
@@ -165,16 +224,25 @@ maps_header['DESC4'] = 'Gas sigma component 1'
 maps_header['DESC5'] = 'Gas velocity component 2'
 maps_header['DESC6'] = 'Gas sigma component 2'
 
-maps_header['DESC7'] = 'Halpha flux'
-maps_header['DESC8'] = 'Hbeta flux'
-maps_header['DESC9'] = 'NII flux'
-maps_header['DESC10'] = 'OIII flux'
-maps_header['DESC11'] = 'OI flux'
-maps_header['DESC12'] = 'SII flux'
+maps_header['DESC7'] = 'Halpha flux comp1'
+maps_header['DESC8'] = 'Hbeta flux comp1'
+maps_header['DESC9'] = 'NII flux comp1'
+maps_header['DESC10'] = 'OIII flux comp1'
+maps_header['DESC11'] = 'OI flux comp1'
+maps_header['DESC12'] = 'SII flux comp1'
+
+maps_header['DESC13'] = 'Halpha flux comp2'
+maps_header['DESC14'] = 'Hbeta flux comp2'
+maps_header['DESC15'] = 'NII flux comp2'
+maps_header['DESC16'] = 'OIII flux comp2'
+maps_header['DESC17'] = 'OI flux comp2'
+maps_header['DESC18'] = 'SII flux comp2'
+
+maps_header['FLUX_UNIT'] = 'erg/s/cm**2'
 
 #cube_fl[1].header = maps_header
 
-maps_arr = np.empty((13, stellar_vel.shape[0], stellar_vel.shape[1]))
+maps_arr = np.empty((21, stellar_vel.shape[0], stellar_vel.shape[1]))
 maps_arr[0,:,:] = binNum_2D
 maps_arr[1,:,:] = stellar_vel
 maps_arr[2,:,:] = stellar_sigma
@@ -182,12 +250,23 @@ maps_arr[3,:,:] = gas_vel_c1
 maps_arr[4,:,:] = gas_sig_c1
 maps_arr[5,:,:] = gas_vel_c2
 maps_arr[6,:,:] = gas_sig_c2
-maps_arr[7,:,:] = log_Ha_flux
-maps_arr[8,:,:] = log_Hb_flux
-maps_arr[9,:,:] = log_Nii_flux
-maps_arr[10,:,:] = log_Oiii_flux
-maps_arr[11,:,:] = log_Oi_flux
-maps_arr[12,:,:] = log_Sii_flux
+
+maps_arr[7,:,:] = Ha_flux_c1
+maps_arr[8,:,:] = Hb_flux_c1
+maps_arr[9,:,:] = Nii_flux_c1
+maps_arr[10,:,:] = Oiii_flux_c1
+maps_arr[11,:,:] = Oi_flux_c1
+maps_arr[12,:,:] = Sii_flux_c1
+
+maps_arr[13,:,:] = Ha_flux_c2
+maps_arr[14,:,:] = Hb_flux_c2
+maps_arr[15,:,:] = Nii_flux_c2
+maps_arr[16,:,:] = Oiii_flux_c2
+maps_arr[17,:,:] = Oi_flux_c2
+maps_arr[18,:,:] = Sii_flux_c2
+
+maps_arr[19,:,:] = gas_vel_start_c1
+maps_arr[20,:,:] = gas_vel_start_c2
 
 #cube_fl[1].data = maps_arr
 
@@ -197,7 +276,12 @@ maps_arr[12,:,:] = log_Sii_flux
 new_hdu = fits.PrimaryHDU(maps_arr, header=maps_header)
 hdulist = fits.HDUList([new_hdu])
 
-hdulist.writeto('/Users/jotter/highres_PSBs/ngc1266_data/MUSE/maps/ngc1266_ppxf_Mar23_maps.fits', overwrite=True)
+savefile = '/Users/jotter/highres_PSBs/ngc1266_data/MUSE/maps/ngc1266_ppxf_Jul24_width.fits'
+
+hdulist.writeto(savefile, overwrite=True)
+
+print(f'saved to {savefile}')
+
 
 
 
