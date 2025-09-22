@@ -27,8 +27,10 @@ def load_file(filepath):
 
 object_name = 'ngc1266'
 cube_filename = '/Users/jotter/highres_psbs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits'
+run_num = 4
 
-final_out_dir = "../output/"+object_name+"_HaNii_out"
+
+final_out_dir = f"../output/ngc1266_HaNii_run{run_num}"
 
 try:
     os.makedirs(final_out_dir)
@@ -675,7 +677,8 @@ class DataProcessor:
             outmodels[ncomp] = result['maximum_likelihood']['point']
 
             # Plot the best fit model and save the plot.
-            self.make_model_plot(ncomp, outmodels[ncomp], lnZs[ncomp], filename)
+            if coordx % 10 == 0 or coordy % 10 == 0:
+                self.make_model_plot(ncomp, outmodels[ncomp], lnZs[ncomp], filename)
 
             # Evaluate whether the current model is better than the previous one based on logZ difference.
             if lnZs[ncomp] - lnZs[bestncomp] > self.target_param["lnz"]:
@@ -742,8 +745,8 @@ def main0():
     target_param = {
         'name': 'NGC1266',
         'red': 0.007214,
-        'minwidth': 1,
-        'maxwidth': 500,
+        'minwidth': 2,
+        'maxwidth': 12,
         'start': 1300, #330,
         'end': 1600, #430,
         'fluxsigma': 5,
@@ -782,7 +785,7 @@ def main0():
     processor = DataProcessor(
         cube_path='/Users/jotter/highres_psbs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits',
         spec_dir='/Users/jotter/highres_psbs/ngc1266_muse/output/ngc1266_spaxel_coord_files/',
-        out_dir='/Users/jotter/highres_psbs/ngc1266_muse/output/ngc1266_spaxel_coord_files_HaNii_out/',
+        out_dir=f'/Users/jotter/highres_psbs/ngc1266_muse/output/ngc1266_HaNii_run{run_num}/',
         target_param=target_param,
         cont_instructions=cont_instructions,
         fit_instructions=fit_instructions
