@@ -26,11 +26,13 @@ def load_file(filepath):
     return coordx, coordy
 
 object_name = 'ngc1266'
-cube_filename = '/Users/jotter/highres_psbs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits'
-run_num = 4
+#cube_filename = '/Users/jotter/highres_psbs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits'
+cube_filename = '/Users/jotter/highres_psbs/ngc1266_MUSE/output/fitsimages/n1266_ppxf_stellarcontsub_Oct25.fits'
+run_num = 1
+run_name = 'Ha_contsub'
 
 
-final_out_dir = f"../output/ngc1266_HaNii_run{run_num}"
+final_out_dir = f"../output/ngc1266_{run_name}_run{run_num}"
 
 try:
     os.makedirs(final_out_dir)
@@ -68,8 +70,6 @@ zero_mask = np.any(data[lower_index:upper_index+1, :, :] == 0, axis=0)
 
 # Define the region of the cube to analyze
 #update
-#y_i, y_f = 70,230
-#x_i, x_f = 60,220
 y_i, y_f = 105,205
 x_i, x_f = 105,205
 
@@ -747,11 +747,15 @@ def main0():
         'red': 0.007214,
         'minwidth': 2,
         'maxwidth': 12,
-        'start': 1300, #330,
-        'end': 1600, #430,
+        'start': 1300, #for Halpha
+        'end': 1600, #for Halpha
+        #'start': 10, #oiii
+        #'end': 350, #oiii
         'fluxsigma': 5,
-        'plotmin': 6500,#5175,
-        'plotmax': 6750,#5280,
+        'plotmin': 6500,#for Halpha
+        'plotmax': 6750,#for Halpha
+        #'plotmin':4950, #oiii 
+        #'plotmax':5150, #oiii
         'maxcomp': 3,
         'cores': 36,
         'lnz': 5.0,
@@ -759,36 +763,39 @@ def main0():
 
     cont_instructions = {
         'form': 'model',
-        'cont_poly': 1,
-        'continuum1': (6443, 6518),#(5215,5225),
-        'continuum2': (6687, 6724)#(5280,5295),
+        'cont_poly': 0, #0 for contsub cube
+        'continuum1': (6443, 6518), #Halpha
+        'continuum2': (6687, 6724), #Halpha
+        #'continuum1': (4762,4848), #oiii
+        #'continuum2': (5074, 5180), #oiii
     }
 
-    fit_instructions = {
+    fit_instructions_ha = {
         'line1': {'name': 'halpha', 'wave': 6562.8, 'minwave': 6593,#6560, #6615,
-        'wave_range': 30.0, 'flux_free': True},
+        'wave_range': 30.0, 'flux_free': True}, #chosen to be range from approx. -750 to +750 km/s
         'line2': {'name': 'nii', 'wave': 6583, 'flux_free': True},
         'line3': {'name': 'nii', 'wave': 6548, 'flux_free': False, 'flux_locked_with': 'line2', 'flux_ratio': 3
         },
     }
 
-    #fit_instructions = {
+    #fit_instructions_hb = {
     #'line1': {'name': 'h-beta', 'wave': 4861.33, 'flux_free': True, 'minwave': 4900, 'wave_range': 20.0},
     #}
 
-    #fit_instructions = {
-    #    'line1': {'name': 'oiii', 'wave': 5006.84, 'flux_free': True, 'minwave': 5225, 'wave_range': 30.0},
-    #    'line2': {'name': 'oiii',  'wave': 4958.92, 'flux_free': False,'flux_locked_with': 'line1', 'flux_ratio': 3}
-    #}
+    fit_instructions_oiii = {
+        'line1': {'name': 'oiii', 'wave': 5006.84, 'flux_free': True,
+        'minwave': 5030, 'wave_range': 20}, #chosen to be range from approx. -750 to +750 km/s
+        'line2': {'name': 'oiii',  'wave': 4958.92, 'flux_free': False,'flux_locked_with': 'line1', 'flux_ratio': 3}
+    }
 
 
     processor = DataProcessor(
-        cube_path='/Users/jotter/highres_psbs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits',
+        cube_path=cube_filename,
         spec_dir='/Users/jotter/highres_psbs/ngc1266_muse/output/ngc1266_spaxel_coord_files/',
-        out_dir=f'/Users/jotter/highres_psbs/ngc1266_muse/output/ngc1266_HaNii_run{run_num}/',
+        out_dir=f'/Users/jotter/highres_psbs/ngc1266_muse/output/ngc1266_{run_name}_run{run_num}/',
         target_param=target_param,
         cont_instructions=cont_instructions,
-        fit_instructions=fit_instructions
+        fit_instructions=fit_instructions_ha
     )
     #print(processor)
     processor.mp_handler()
