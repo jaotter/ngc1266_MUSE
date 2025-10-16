@@ -6,10 +6,12 @@ import os
 from time import perf_counter as clock
 from astropy.io import fits
 import numpy as np
+from astropy.wcs import WCS
 
 from ppxf.ppxf import ppxf
 import ppxf.ppxf_util as util
-import ppxf.miles_util as lib
+#import ppxf.miles_util as lib
+import ppxf.sps_util as lib
 import ppxf_custom_util as custom_util
 
 import matplotlib.pyplot as plt
@@ -36,8 +38,8 @@ NII5756 = 5756.2
 OII1 = 7322.0
 OII2 = 7332.75
 
-ybinrange = (100,210)
-xbinrange = (100,210)
+#ybinrange = (100,210)
+#xbinrange = (100,210)
 
 
 def ANR(gas_dict, gas_name, emline, gal_lam, gas_bestfit, mad_std_residuals, velocity):
@@ -161,19 +163,23 @@ def output_ppxf_fit_plot(plot_name, pp, good_pix_total, logLam, vel_comp0, z, nc
 
 		plt.sca(ax2)
 		pp.plot()
-		ax2.set_xlim(5800/1e4,6000/1e4)
+		#ax2.set_xlim(5800/1e4,6000/1e4)
+		ax2.set_xlim((Ha-50)/1e4,(Ha+50)/1e4)
 		xticks = ax2.get_xticks()
 		ax2.set_xticks(xticks, labels=np.array(np.round(xticks*1e4, -1), dtype='int'))
 		ax2.set_ylabel('')
 		ax2.set_xlabel('')
-		ax2.set_title(r'Zoom-in on NaD', fontsize = 12)
+		#ax2.set_title(r'Zoom-in on NaD', fontsize = 12)
+		ax2.set_title(r'Zoom-in on H$\alpha$ and [NII]', fontsize = 12)
 		
 		plt.sca(ax3)
 		pp.plot()
-		ax3.set_xlim(8200/1e4,8900/1e4)
+		#ax3.set_xlim(8200/1e4,8900/1e4)
+		ax3.set_xlim((SII1-50)/1e4,(SII2+50)/1e4)
 		xticks = ax3.get_xticks()
 		ax3.set_xticks(xticks, labels=np.array(np.round(xticks*1e4, -1), dtype='int'))
-		ax3.set_title(r'Zoom-in on Ca II absorption', fontsize = 12)
+		#ax3.set_title(r'Zoom-in on Ca II absorption', fontsize = 12)
+		ax3.set_title(r'Zoom-in on [SII]', fontsize = 12)
 		ax3.set_yticklabels([])
 		ax3.set_xlabel('')
 		ax3.set_ylabel('')
@@ -278,8 +284,6 @@ def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot
 
 	# MUSE spectral resolution, in Angstroms
 	FWHM_gal = 2.51
-	
-
 
 	#preparing stellar templates
 	miles_lamrange_trunc = [3525, 9300] #expanded EMILES templates cover more
@@ -287,8 +291,11 @@ def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot
 	cube_fit_ind = np.where((wave_lam_rest > miles_lamrange_trunc[0]) & (wave_lam_rest < miles_lamrange_trunc[1]))[0] #only fit rest-frame area covered by templates
 
 	#shorten all spectra to only be within fitting area - only fit central 22" which is 110 pixels
-	cube_trunc = cube[cube_fit_ind,ybinrange[0]:ybinrange[1],xbinrange[0]:xbinrange[1]] 
-	error_cube_trunc = error_cube[cube_fit_ind,ybinrange[0]:ybinrange[1],xbinrange[0]:xbinrange[1]]
+	cube_trunc = cube[cube_fit_ind,:,:] 
+	error_cube_trunc = error_cube[cube_fit_ind,:,:]
+
+	contsub_cube = np.full(cube_trunc.shape, np.nan)
+	cont_cube = np.full(cube_trunc.shape, np.nan)
 
 	wave_trunc_rest = wave_lam_rest[cube_fit_ind]
 	wave_trunc = wave_lam[cube_fit_ind]
@@ -306,9 +313,10 @@ def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot
 	binNum = np.reshape(np.arange(cube_trunc.shape[1]*cube_trunc.shape[2]), (cube_trunc.shape[1], cube_trunc.shape[2]))
 	x,y = np.meshgrid(np.arange(cube.shape[2]), np.arange(cube.shape[1]))
 
-	code_dir = "../../ppxf_files/EMILES_BASTI_BASE_CH_FITS/" # directory where stellar templates are located
-	pathname = os.path.join(code_dir, 'Ech1.30*.fits')
-	miles = lib.miles(pathname, velscale_trunc, FWHM_gal, wave_range=[3523, 9500])		# The stellar templates are reshaped below into a 2-dim array with each	
+	#code_dir = "Users/jotter/ppxf_files/EMILES_BASTI_BASE_CH_FITS/" # directory where stellar templates are located
+	#pathname = os.path.join(code_dir, 'Ech1.30*.fits')
+	pathname = '/Users/jotter/highres_psbs/ngc1266_MUSE/spectra_emiles_9.0.npz'
+	miles = lib.sps_lib(pathname, velscale_trunc, FWHM_gal, norm_range=[3523, 9500])	# The stellar templates are reshaped below into a 2-dim array with each	
 																						# spectrum as a column, however we save the original array dimensions,
 																						# which are needed to specify the regularization dimensions.
 	reg_dim = miles.templates.shape[1:]
@@ -341,15 +349,15 @@ def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot
 		prev_vmap = None
 
 	loop_list = np.unique(binNum)
-	if individual_bin is not None:
-		loop_list = [individual_bin]
+	#if individual_bin is not None:
+	#	loop_list = [individual_bin]
 
 	for bn in loop_list: 
 		save_dict['bin_num'].append(bn)
 
 		b_loc = np.where(binNum == bn)
-		x_loc = x[b_loc]
-		y_loc = y[b_loc]
+		x_loc = x[b_loc][0]
+		y_loc = y[b_loc][0]
 
 		spectrum = cube_trunc[:,y_loc,x_loc]
 		err_spectrum = error_cube_trunc[:,y_loc,x_loc]
@@ -377,8 +385,8 @@ def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot
 		#gal_lin = np.nansum(spectra, axis=1)/n_spec
 		#noise_lin = np.sqrt(np.nansum(np.abs(err_spectra), axis=1))/n_spec #add error spectra in quadrature, err is variance so no need to square
 
-		gal_lin = spectrum[:,0]
-		noise_lin = err_spectrum[:,0]
+		gal_lin = spectrum#[:,0]
+		noise_lin = err_spectrum#[:,0]
 
 		#noise_lin = noise_lin/np.nanmedian(noise_lin)
 		noise_lin[np.isinf(noise_lin)] = np.nanmedian(noise_lin)
@@ -427,6 +435,9 @@ def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot
 		save_dict['SN_mad_STD'].append(SN_wMadStandardDev)
 		print('S/N w/ mad_std: '+str(SN_wMadStandardDev))
 
+		contsub_cube[:,y_loc,x_loc] = residuals
+		cont_cube[:,y_loc,x_loc] = bestfit
+
 		vel_comp0 = param0[0]
 		vel_error_comp0 = error[0]*np.sqrt(pp.chi2)
 		sig_comp0 = param0[1]
@@ -456,7 +467,7 @@ def ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam, plot
 								bn, mad_std_residuals, SN_wMadStandardDev, fit_gas=False)
 
 
-	return save_dict, optimal_templates_save
+	return save_dict, optimal_templates_save, contsub_cube, cont_cube
 
 
 def ppxf_fit_gas(cube, error_cube, adegree, mdegree, wave_lam, limit_doublets=True, tie_balmer=False, plot_every=0,
@@ -1030,9 +1041,17 @@ def run_stellar_fit(runID, cube_path, prev_vmap_path=None, plot_every=0, individ
 
 	# Reading in the cube
 	hdu = fits.open(cube_path)
-	cube = hdu[1].data
-	error_cube = hdu[2].data
+	cube_full = hdu[1].data
+	error_cube_full = hdu[2].data
 	h1 = hdu[1].header
+	hdu.close()
+
+	#cube fitting range
+	y_i, y_f = 105,205
+	x_i, x_f = 105,205
+
+	cube = cube_full[:, y_i:y_f, x_i:x_f]
+	error_cube = error_cube_full[:, y_i:y_f, x_i:x_f]
 
 	#ppxf parameters
 	moments = 2
@@ -1046,17 +1065,22 @@ def run_stellar_fit(runID, cube_path, prev_vmap_path=None, plot_every=0, individ
 	plot_name = f'stellarfit_{runID}'
 	csv_save_name = f'{gal_out_dir}stellarfit_{runID}_nobin.csv'
 
-	run_dict, opt_temps_save = ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam,
+	run_dict, opt_temps_save, contsub_cube, cont_cube = ppxf_fit_stellar(cube, error_cube, moments, adegree, mdegree, wave_lam,
 						plot_every=plot_every, plot_name=plot_name, prev_vmap_path=prev_vmap_path, individual_bin=individual_bin)
 	run_dict_df = pd.DataFrame.from_dict(run_dict)
 	run_dict_df.to_csv(csv_save_name, index=False, header=True)
 
-	print(f'Saved ppxf stellar fit csv to {csv_save_name}')
+	print(f'Saved ppxf stellar fit parameters csv to {csv_save_name}')
 
 	opt_temps_save_path = csv_save_name[:-4]+'_templates.npy'
 	np.save(opt_temps_save_path, opt_temps_save)
 
 	print(f'Saved optimal templates to {opt_temps_save_path}')
+
+
+	np.save(f'/Users/jotter/highres_psbs/ngc1266_MUSE/output/n1266_ppxf_stellarcontsub_{runID}.npy', contsub_cube)
+	np.save(f'/Users/jotter/highres_psbs/ngc1266_MUSE/output/n1266_ppxf_stellarcont_{runID}.npy', cont_cube)
+
 
 
 def run_gas_fit(runID, cube_path, prev_fit_path, plot_every=0, individual_bin=None):
@@ -1101,15 +1125,34 @@ def run_gas_fit(runID, cube_path, prev_fit_path, plot_every=0, individual_bin=No
 	print(f'Saved ppxf gas fit csv to {csv_save_name}')
 
 
+def np_to_fits(np_path, runID):
+	data = np.load(np_path)
+
+	fl = fits.open("../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits")
+	h1 = fl[1].header
+
+	wcs = WCS(h1).celestial
+	new_head = wcs.to_header()
+
+	hdu_new = fits.PrimaryHDU(data=data)
+	for key in new_head:
+		hdu_new.header.append(key, new_head[key])
+	hdu_new.writeto(f'/Users/jotter/highres_psbs/ngc1266_MUSE/output/fitsimages/n1266_ppxf_stellarcontsub_{runID}.fits', overwrite=True)
+
+
 	
 cube_path = "../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
-prev_vmap_path = '/Users/jotter/highres_PSBs/ngc1266_data/MUSE/maps/ngc1266_ppxf_Feb23_iter_gs_maps.fits'
-run_id_stellar = 'Mar23'
+#prev_vmap_path = '/Users/jotter/highres_PSBs/ngc1266_data/MUSE/maps/ngc1266_ppxf_Feb23_iter_gs_maps.fits'
+#run_id_stellar = 'Mar23'
 #individual_bin = 5900
-run_id_gas = 'Jul24_width'
+#run_id_gas = 'Jul24_width'
 
-#run_stellar_fit(run_id_stellar, cube_path, prev_vmap_path=prev_vmap_path, plot_every=100)
-run_gas_fit(run_id_gas, cube_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}_nobin.csv', plot_every=200)
+run_id_stellar = 'Oct25'
+run_stellar_fit(run_id_stellar, cube_path, prev_vmap_path=None, plot_every=0)
+np_to_fits('/Users/jotter/highres_psbs/ngc1266_MUSE/output/n1266_ppxf_stellarcontsub_Oct25.npy', run_id_stellar)
+
+
+#run_gas_fit(run_id_gas, cube_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}_nobin.csv', plot_every=200)
 
 #run_iterative_gas_fit(run_id_gas, cube_path, vorbin_path, prev_fit_path=f'ppxf_output/stellarfit_{run_id_stellar}.csv', plot_every=100,
 #					single_gascomp=True, globsearch=False, individual_bin=bin_num)
