@@ -134,6 +134,24 @@ def calc_line_ratios():
 	plot_bpt_diagrams(Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio)
 
 
+def calc_e_density():
+
+	Sii_vels, Sii_sigs, Sii_fluxes = load_maps('/Users/jotter/highres_PSBs/ngc1266_MUSE/output/fitsimages/NGC1266_maps_Sii_contsub_run1_sortmid.fits', nflux=2)
+
+	cube_fl = fits.open('/Users/jotter/highres_PSBs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits')
+	cube_wcs = WCS(cube_fl[1].header).celestial
+	cube_fl.close()
+
+	a_S16 = 0.4315
+	b_S16 = 2107
+	c_S16 = 627.1
+
+	Sii_ratio = Sii_fluxes[0] / Sii_fluxes[1]
+
+	ne_map = (c_S16*Sii_ratio - a_S16*b_S16) / (a_S16 - Sii_ratio)
+
+	plot_ne_maps(Sii_ratio, ne_map, cube_wcs)
+
 
 def plot_vel_3comp(vels, wcs, plotname):
 
@@ -491,8 +509,45 @@ def plot_bpt_diagrams(Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio):
 	Kewley_Oi = 0.73 / (Oi_Ha_ratio + 0.59) + 1.33
 	
 
-calc_line_ratios()
+def plot_ne_maps(Sii_ratio, ne_map, wcs):
 
+	full_map = np.full((100,100), 1)
+
+	fig = plt.figure(figsize=(17,8))
+	gs = GridSpec(1,2, wspace=0.15)
+
+	ax0 = fig.add_subplot(gs[0,0], projection=wcs)
+
+	col0 = ax0.imshow(Sii_ratio, cmap='viridis', origin='lower', vmin=0.6, vmax=1.5)
+
+	ax0.set_title(r'[SII] $\lambda$6716/$\lambda$6731', fontsize=20)
+	ax0.set_ylabel('Dec.', fontsize=20)
+	ax0.set_xlabel('RA', fontsize=20)
+	ax0.tick_params(axis='both', labelsize=16)
+
+	cb0 = fig.colorbar(col0, ax=ax0)
+	cb0.ax.tick_params(axis='y', labelsize=16)
+
+	ax1 = fig.add_subplot(gs[0,1], projection=wcs)
+
+	col1 = ax1.imshow(np.log10(ne_map), cmap='spring', origin='lower',vmin=0, vmax=3)
+
+	ax1.set_title(r'log $n_e$ (cm$^{-3}$)', fontsize=20)
+	ax1.set_ylabel(' ', fontsize=14)
+	ax1.set_xlabel('RA', fontsize=20)
+
+	ax1.tick_params(axis='y', labelleft=False)
+	ax1.tick_params(axis='x', labelsize=16)
+
+	cb1 = fig.colorbar(col1, ax=ax1)
+	cb1.ax.tick_params(axis='y', labelsize=16)
+
+	plt.savefig(f'/Users/jotter/highres_PSBs/ngc1266_MUSE/plots/MUSE_ne_maps.pdf', dpi=500, bbox_inches='tight')
+
+	plt.close()
+
+#calc_line_ratios()
+calc_e_density()
 
 
 

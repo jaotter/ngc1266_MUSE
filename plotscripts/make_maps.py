@@ -10,8 +10,30 @@ import astropy.constants as const
 import astropy.units as u
 
 
-run_num = 3
-fit_table_path = f'/Users/jotter/highres_PSBs/ngc1266_MUSE/output/ngc1266_HaNii_run{run_num}/NGC1266_halpha_out_header.txt'
+run_num = 1
+#run_name = 'Ha_contsub'
+#flname = 'halpha_out'
+#run_name = 'Oiii_contsub'
+#flname = 'oiii_out'
+#run_name = 'Hb_contsub'
+#flname = 'hbeta_out'
+#run_name = 'Sii_contsub'
+#flname = 'sii_out'
+#run_name = 'Oi_contsub'
+#flname = 'oi_out'
+run_name = 'Ni_contsub'
+flname = 'ni_out'	
+
+#fit_table_path = f'/Users/jotter/highres_PSBs/ngc1266_MUSE/output/ngc1266_{run_name}_run{run_num}/NGC1266_Ha_contsub_header.txt'
+fit_table_path = f'/Users/jotter/highres_PSBs/ngc1266_MUSE/output/ngc1266_{run_name}_run{run_num}/NGC1266_{flname}.txt'
+
+#restwave = 6562.8 * u.Angstrom #Halpha
+#restwave = 5006.84 * u.Angstrom #Oiii
+#restwave = 4861.3 * u.Angstrom #Hbeta
+#restwave = 6716.4 * u.Angstrom #shorter wavelength of the two sii lines
+restwave = 6300 * u.Angstrom
+
+n_free_lines = 1 #1 for oiii, Hbeta, 2 for hanii, sii
 
 fit_tab = Table.read(fit_table_path, format='ascii')
 
@@ -32,25 +54,25 @@ comp2_wave = np.full(map_shape, np.nan)
 comp3_wave = np.full(map_shape, np.nan)
 
 comp1_width = np.full(map_shape, np.nan)
-
-
 comp2_width = np.full(map_shape, np.nan)
 comp3_width = np.full(map_shape, np.nan)
 
 comp1_fluxA = np.full(map_shape, np.nan)
-comp1_fluxB = np.full(map_shape, np.nan)
 comp2_fluxA = np.full(map_shape, np.nan)
-comp2_fluxB = np.full(map_shape, np.nan)
 comp3_fluxA = np.full(map_shape, np.nan)
-comp3_fluxB = np.full(map_shape, np.nan)
+
+if n_free_lines == 2:
+	comp1_fluxB = np.full(map_shape, np.nan)
+	comp2_fluxB = np.full(map_shape, np.nan)
+	comp3_fluxB = np.full(map_shape, np.nan)
 
 
 #loop through table to create maps
 for i in range(len(fit_tab)):
 
 	ncomp = fit_tab['ncomps'][i]
-	coordx = fit_tab['coordx'][i] - 105
-	coordy = fit_tab['coordy'][i] - 105
+	coordx = fit_tab['coordx'][i] - 1# - 105
+	coordy = fit_tab['coordy'][i] - 1# - 105
 	filename = fit_tab['filename'][i]
 	file_num = int(filename.split('.')[0])
 
@@ -63,20 +85,23 @@ for i in range(len(fit_tab)):
 		comp1_wave[coordy, coordx] = fit_tab['wave_1'][i]
 		comp1_width[coordy, coordx] = fit_tab['width_1'][i]
 		comp1_fluxA[coordy, coordx] = fit_tab['flux_1_A'][i]
-		comp1_fluxB[coordy, coordx] = fit_tab['flux_1_B'][i]
+		if n_free_lines == 2:
+			comp1_fluxB[coordy, coordx] = fit_tab['flux_1_B'][i]
 
 		if ncomp > 1:
 			comp2_wave[coordy, coordx] = fit_tab['wave_2'][i]
 			comp2_width[coordy, coordx] = fit_tab['width_2'][i]
 			comp2_fluxA[coordy, coordx] = fit_tab['flux_2_A'][i]
-			comp2_fluxB[coordy, coordx] = fit_tab['flux_2_B'][i]
+			if n_free_lines == 2:
+				comp2_fluxB[coordy, coordx] = fit_tab['flux_2_B'][i]
 			if ncomp > 2:
 				comp3_wave[coordy, coordx] = fit_tab['wave_3'][i]
 				comp3_width[coordy, coordx] = fit_tab['width_3'][i]
 				comp3_fluxA[coordy, coordx] = fit_tab['flux_3_A'][i]
-				comp3_fluxB[coordy, coordx] = fit_tab['flux_3_B'][i]
+				if n_free_lines == 2:
+					comp3_fluxB[coordy, coordx] = fit_tab['flux_3_B'][i]
 
-restwave = 6562.8 * u.Angstrom
+
 wavetovel = u.doppler_optical(restwave)
 
 z = 0.007214         # NGC 1266 redshift, from SIMBAD
@@ -109,6 +134,7 @@ if sort_components == True:
 	combined_sorted_vels = np.take_along_axis(combined_vels, combined_sort_ind, axis=0)
 
 	#this section is to make component 3 the intermediate width component rather than the widest
+	#just swapping c2 and c3
 	ncomp3_ind = np.where(ncomp_map == 3)
 	old_c2_sigmas = combined_sorted_sigmas[1,:,:][ncomp3_ind]
 	combined_sorted_sigmas[1,:,:][ncomp3_ind] = combined_sorted_sigmas[2,:,:][ncomp3_ind]
@@ -118,15 +144,28 @@ if sort_components == True:
 	combined_sorted_vels[1,:,:][ncomp3_ind] = combined_sorted_vels[2,:,:][ncomp3_ind]
 	combined_sorted_vels[2,:,:][ncomp3_ind] = old_c2_vels
 
-	#then swap c1 and c3 
-	#old_c1_sigmas = combined_sorted_sigmas[0,:,:][ncomp3_ind]
-	#combined_sorted_sigmas[0,:,:][ncomp3_ind] = combined_sorted_sigmas[2,:,:][ncomp3_ind]
-	#combined_sorted_sigmas[2,:,:][ncomp3_ind] = old_c1_sigmas
+	#then make c3 the component with more extreme vel values than c1
 
-	#old_c1_vels = combined_sorted_vels[0,:,:][ncomp3_ind]
-	#combined_sorted_vels[0,:,:][ncomp3_ind] = combined_sorted_vels[2,:,:][ncomp3_ind]
-	#combined_sorted_vels[2,:,:][ncomp3_ind] = old_c1_vels
+	mid_c1_absvels = np.abs(combined_sorted_vels[0,:,:])
+	mid_c3_absvels = np.abs(combined_sorted_vels[2,:,:])
+	mid_c1_vels = combined_sorted_vels[0,:,:]
+	mid_c3_vels = combined_sorted_vels[2,:,:]
+	mid_combined_vels = np.array([mid_c1_vels, mid_c3_vels])
+	mid_c1_sigmas = combined_sorted_sigmas[0,:,:]
+	mid_c3_sigmas = combined_sorted_sigmas[2,:,:]
+	mid_combined_sigmas = np.array([mid_c1_sigmas, mid_c3_sigmas])
+	c1c3_vel_sort_ind = np.argsort(np.array([mid_c1_absvels, mid_c3_absvels]), axis=0)
 
+	mid_sorted_vels = np.take_along_axis(mid_combined_vels, c1c3_vel_sort_ind, axis=0)
+	mid_sorted_sigmas = np.take_along_axis(mid_combined_sigmas, c1c3_vel_sort_ind, axis=0)
+
+	combined_sorted_vels[0,:,:][ncomp3_ind] = mid_sorted_vels[0,:,:][ncomp3_ind]
+	combined_sorted_vels[2,:,:][ncomp3_ind] = mid_sorted_vels[1,:,:][ncomp3_ind]
+	
+	combined_sorted_sigmas[0,:,:][ncomp3_ind] = mid_sorted_sigmas[0,:,:][ncomp3_ind]
+	combined_sorted_sigmas[2,:,:][ncomp3_ind] = mid_sorted_sigmas[1,:,:][ncomp3_ind]
+
+	#final sorted maps
 	comp1_sigma = combined_sorted_sigmas[0,:,:]
 	comp2_sigma = combined_sorted_sigmas[1,:,:]
 	comp3_sigma = combined_sorted_sigmas[2,:,:]
@@ -135,12 +174,19 @@ if sort_components == True:
 	comp2_vel = combined_sorted_vels[1,:,:]
 	comp3_vel = combined_sorted_vels[2,:,:]
 
-maps_list = [file_num_map, ncomp_map,
-			comp1_vel, comp2_vel, comp3_vel, comp1_sigma, comp2_sigma, comp3_sigma,
-			comp1_fluxA, comp1_fluxB, comp2_fluxA, comp2_fluxB, comp3_fluxA, comp3_fluxB]
+if n_free_lines == 1:
+	maps_list = [file_num_map, ncomp_map,
+				comp1_vel, comp2_vel, comp3_vel, comp1_sigma, comp2_sigma, comp3_sigma,
+				comp1_fluxA, comp2_fluxA, comp3_fluxA]
+	maps_names = ['filename', 'ncomp', 'comp1_vel', 'comp2_vel', 'comp3_vel', 'comp1_sigma', 'comp2_sigma', 'comp3_sigma',
+				'comp1_fluxA', 'comp2_fluxA', 'comp3_fluxA']
 
-maps_names = ['filename', 'ncomp', 'comp1_vel', 'comp2_vel', 'comp3_vel', 'comp1_sigma', 'comp2_sigma', 'comp3_sigma',
-			'comp1_fluxA', 'comp1_fluxB', 'comp2_fluxA', 'comp2_fluxB', 'comp3_fluxA', 'comp3_fluxB']
+if n_free_lines == 2:
+	maps_list = [file_num_map, ncomp_map,
+				comp1_vel, comp2_vel, comp3_vel, comp1_sigma, comp2_sigma, comp3_sigma,
+				comp1_fluxA, comp1_fluxB, comp2_fluxA, comp2_fluxB, comp3_fluxA, comp3_fluxB]
+	maps_names = ['filename', 'ncomp', 'comp1_vel', 'comp2_vel', 'comp3_vel', 'comp1_sigma', 'comp2_sigma', 'comp3_sigma',
+				'comp1_fluxA', 'comp1_fluxB', 'comp2_fluxA', 'comp2_fluxB', 'comp3_fluxA', 'comp3_fluxB']
 
 maps_arr = np.empty((len(maps_list), fitting_bounds_x[1] - fitting_bounds_x[0], fitting_bounds_y[1] - fitting_bounds_y[0]))
 
@@ -156,5 +202,5 @@ hdu = fits.PrimaryHDU(data=maps_arr)
 #fl[0].data = maps_arr
 hdu.header = header
 
-hdu.writeto(f'/Users/jotter/highres_PSBs/ngc1266_MUSE/output/fitsimages/NGC1266_maps_run{run_num}{"_sortmid" if sort_components == True else ""}.fits', overwrite=True)
+hdu.writeto(f'/Users/jotter/highres_PSBs/ngc1266_MUSE/output/fitsimages/NGC1266_maps_{run_name}_run{run_num}{"_sortmid" if sort_components == True else ""}.fits', overwrite=True)
 
