@@ -7,7 +7,8 @@ from matplotlib.gridspec import GridSpec
 from astropy.io import fits
 from astropy.table import Table
 
-from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
+from astropy.wcs import WCS, utils
 from astropy.wcs.utils import proj_plane_pixel_scales
 from matplotlib.patches import Rectangle, Ellipse
 from spectral_cube import SpectralCube
@@ -64,6 +65,16 @@ def load_maps(path, ncomp=3, nflux=2):
 	return vels, sigs, fluxes
 
 
+def load_vla(vla_path='/Users/jotter/highres_PSBs/ngc1266_VLA/fitsimages/NGC1266_AX_nterms2_multiscale_briggs_r0_v7.fits'):
+
+	vla_fl = fits.open(vla_path)
+	vla_wcs = WCS(vla_fl[0].header).celestial
+	vla_map = vla_fl[0].data.squeeze()
+
+	vla_fl.close()
+
+	return vla_map, vla_wcs
+
 def calc_line_ratios():
 
 	Ha_vels, Ha_sigs, HaNii_fluxes = load_maps('/Users/jotter/highres_PSBs/ngc1266_MUSE/output/fitsimages/NGC1266_maps_run4_sortmid2.fits', nflux=2)
@@ -75,6 +86,8 @@ def calc_line_ratios():
 	cube_fl = fits.open('/Users/jotter/highres_PSBs/ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits')
 	cube_wcs = WCS(cube_fl[1].header).celestial
 	cube_fl.close()
+
+	maps_wcs = cube_wcs[105:205, 105:205]
 
 	Oiii_Hb_ratio = np.log10(Oiii_fluxes[0] / Hb_fluxes[0])
 	Nii_Ha_ratio = np.log10(HaNii_fluxes[1] / HaNii_fluxes[0])
@@ -88,7 +101,7 @@ def calc_line_ratios():
 	Kewley_Oi = 0.73 / (Oi_Ha_ratio + 0.59) + 1.33
 	Kauffmann_Nii = 0.61 / (Nii_Ha_ratio - 0.05) + 1.3
 
-	#plot_flux_ratios([Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio], ['OIII/Hbeta', 'NII/Halpha', 'SII/Halpha', 'OI/Halpha'], cube_wcs, 'n1266_bpt_ratios')
+	plot_flux_ratios([Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio], [r'log OIII/H$\beta$', r'log NII/H$\alpha$', r'log SII/H$\alpha$', r'log OI/H$\alpha$'], maps_wcs, 'n1266_bpt_ratios')
 
 	Nii_strong_AGN = np.where(Kewley_Nii > Oiii_Hb_ratio, 1., 0.)
 	Sii_AGN = np.where(Kewley_Sii > Oiii_Hb_ratio, 1.0, 0.)
@@ -129,10 +142,30 @@ def calc_line_ratios():
 	Sii_bpt_masks = [Sii_SF, Sii_AGN, Sii_shock_mask]
 	Oi_bpt_masks = [Oi_SF, Oi_AGN, Oi_shock_mask]
 	
-	#plot_bpt_maps(flux_map, Nii_bpt_masks, Sii_bpt_masks, Oi_bpt_masks, cube_wcs)
+	#plot_bpt_maps(flux_map, Nii_bpt_masks, Sii_bpt_masks, Oi_bpt_masks, maps_wcs)
 
-	plot_bpt_diagrams(Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio)
+	dist_map = distance_map(maps_wcs)
 
+	#plot_bpt_diagrams(Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio, dist_map)
+
+
+def distance_map(wcs, center=None):
+
+	pixel_scales = utils.proj_plane_pixel_scales(wcs)
+
+	if center == None:
+		center = SkyCoord(ra='3:16:00.7557851030', dec='-2:25:38.4128152152', unit=(u.hourangle, u.degree))
+	center_pix_og = wcs.all_world2pix(center.ra, center.dec, 0)
+	center_pix = (center_pix_og[0] - 105, center_pix_og[1] - 105)
+	print(center_pix)
+
+	grid_x, grid_y = np.mgrid[0:100, 0:100]
+
+	pix_dist = np.sqrt(np.power(grid_x - center_pix[0], 2) + np.power(grid_y - center_pix[1], 2))
+
+	wrld_dist = (pix_dist * pixel_scales[0] * u.degree).to(u.arcsecond).value
+
+	return wrld_dist
 
 def calc_e_density():
 
@@ -260,7 +293,7 @@ def plot_sigma_3comp(sigs, wcs, plotname):
 	plt.savefig(f'/Users/jotter/highres_PSBs/ngc1266_MUSE/plots/MUSE_sigmamaps_{plotname}.pdf', dpi=500, bbox_inches='tight')
 
 
-def plot_flux_ratios(ratio_maps, map_names, wcs, plotname):
+def plot_flux_ratios(ratio_maps, map_names, wcs, plotname, plot_vla=True):
 
 	map1, map2, map3, map4 = ratio_maps[0], ratio_maps[1], ratio_maps[2], ratio_maps[3]
 	fig = plt.figure(figsize=(32,8))
@@ -269,10 +302,10 @@ def plot_flux_ratios(ratio_maps, map_names, wcs, plotname):
 	ax0 = fig.add_subplot(gs[0,0], projection=wcs)
 
 	col = ax0.imshow(map1, cmap='viridis', origin='lower')
-	cb0 = fig.colorbar(col, label='km/s', ax=ax0)
+	cb0 = fig.colorbar(col, ax=ax0)
 
 	cb0.ax.tick_params(axis='y', labelsize=16)
-	cb0.ax.set_ylabel('km/s', fontsize=16)
+	cb0.ax.set_ylabel('', fontsize=16)
 
 	ax0.set_title(map_names[0], fontsize=20)
 	ax0.set_ylabel('Dec.', fontsize=20)
@@ -324,6 +357,22 @@ def plot_flux_ratios(ratio_maps, map_names, wcs, plotname):
 	ax3.set_xlabel('RA', fontsize=20)
 	ax3.tick_params(axis='y', labelleft=False)
 	ax3.tick_params(axis='x', labelsize=16)
+
+	if plot_vla == True:
+		vla_map, vla_wcs = load_vla()
+
+		contour_lvls = np.nanmax(vla_map) * np.logspace(-2.7, 0, 6)
+		ax1.contour(vla_map, levels=contour_lvls, colors='k', transform=ax1.get_transform(vla_wcs))
+		ax2.contour(vla_map, levels=contour_lvls, colors='k', transform=ax2.get_transform(vla_wcs))
+		ax3.contour(vla_map, levels=contour_lvls, colors='k', transform=ax3.get_transform(vla_wcs))
+		
+
+	ax1.set_xlim(0,100)
+	ax1.set_ylim(0,100)
+	ax2.set_xlim(0,100)
+	ax2.set_ylim(0,100)
+	ax3.set_xlim(0,100)
+	ax3.set_ylim(0,100)
 
 	plt.savefig(f'/Users/jotter/highres_PSBs/ngc1266_MUSE/plots/MUSE_ratiomaps_{plotname}.pdf', dpi=500, bbox_inches='tight')
 
@@ -383,14 +432,14 @@ def plot_bpt_maps(flux_map, Nii_bpt_masks, Sii_bpt_masks, Oi_bpt_masks, wcs, plo
 	plt.close()
 
 
-def plot_bpt_diagrams(Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio):
+def plot_bpt_diagrams(Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio, distance_map):
 
 	fig = plt.figure(figsize=(26,8))
 	gs = GridSpec(1,3, wspace=0.1)
 
 	ax0 = fig.add_subplot(gs[0,0])
 
-	ax0.plot(Nii_Ha_ratio, Oiii_Hb_ratio,linestyle='', marker='.', color='tab:blue')
+	ax0.scatter(Nii_Ha_ratio, Oiii_Hb_ratio, c=distance_map, marker='.', cmap='plasma', vmin=0, vmax=10)
 
 	Nii_Ha_vals1 = np.linspace(-2,0.469,100)
 	Nii_Ha_vals2 = np.linspace(-2,0.049,100)
@@ -431,7 +480,7 @@ def plot_bpt_diagrams(Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio):
 
 	ax1 = fig.add_subplot(gs[0,1], sharey=ax0)
 
-	ax1.plot(Sii_Ha_ratio, Oiii_Hb_ratio, linestyle='', marker='.', color='tab:blue')
+	ax1.scatter(Sii_Ha_ratio, Oiii_Hb_ratio, c=distance_map, marker='.', cmap='plasma', vmin=0, vmax=10)
 
 	Sii_Ha_vals = np.linspace(-2,0.319,100)
 	Kewley_Sii = 0.72 / (Sii_Ha_vals - 0.32) + 1.30
@@ -465,7 +514,7 @@ def plot_bpt_diagrams(Oiii_Hb_ratio, Nii_Ha_ratio, Sii_Ha_ratio, Oi_Ha_ratio):
 
 	ax2 = fig.add_subplot(gs[0,2], sharey=ax0)
 
-	ax2.plot(Oi_Ha_ratio, Oiii_Hb_ratio, linestyle='', marker='.', color='tab:blue')
+	ax2.scatter(Oi_Ha_ratio, Oiii_Hb_ratio, c=distance_map, marker='.', cmap='plasma', vmin=0, vmax=10)
 
 	Oi_Ha_vals = np.linspace(-2.5,-0.591,100)
 	Kewley_Oi = 0.73 / (Oi_Ha_vals + 0.59) + 1.33
@@ -546,8 +595,39 @@ def plot_ne_maps(Sii_ratio, ne_map, wcs):
 
 	plt.close()
 
-#calc_line_ratios()
-calc_e_density()
+
+def plot_vla_maps():
+
+	vlaX, vlaX_wcs = load_vla()
+	vlaX_noise = 3.4e-6
+	vla5GHz, vla5GHz_wcs = load_vla('/Users/jotter/highres_PSBs/ngc1266_data/VLA/NGC1266_Cband_Aconfig_subim.fits')
+	vla5GHz_noise = 2e-5
+
+	cont_levels = np.array([5, 10, 20, 40, 80])
+
+	fig = plt.figure(figsize=(8,8))
+	ax0 = fig.add_subplot(111, projection=vlaX_wcs)
+
+	col0 = ax0.imshow(np.log10(vlaX), cmap='Greys', origin='lower', vmin=-6, vmax=-4)
+	
+	ax0.contour(vla5GHz, levels=cont_levels*vla5GHz_noise, colors='tab:blue', transform=ax0.get_transform(vla5GHz_wcs))
+	ax0.contour(vlaX, levels=cont_levels*vlaX_noise, colors='tab:red')
+
+	#ax0.set_title(r'[SII] $\lambda$6716/$\lambda$6731', fontsize=20)
+	ax0.set_ylabel('Dec.', fontsize=20)
+	ax0.set_xlabel('RA', fontsize=20)
+	ax0.tick_params(axis='both', labelsize=16)
+
+	ax0.set_xlim(1515, 2515)
+	ax0.set_ylim(1490, 2490)
+
+	plt.savefig(f'/Users/jotter/highres_PSBs/ngc1266_MUSE/plots/VLA_contour_maps.pdf', dpi=500, bbox_inches='tight')
+
+	plt.close()
+
+#plot_vla_maps()
+calc_line_ratios()
+#calc_e_density()
 
 
 
