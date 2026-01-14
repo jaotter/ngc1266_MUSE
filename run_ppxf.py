@@ -1130,14 +1130,30 @@ def np_to_fits(np_path, runID):
 
 	fl = fits.open("../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits")
 	h1 = fl[1].header
+	error = fl[2].data[:,105:205,105:205]
 
-	wcs = WCS(h1).celestial
-	new_head = wcs.to_header()
+	linwave = np.array(h1['CRVAL3']+(np.arange(0, h1['NAXIS3'])*h1['CD3_3']))
+	log_spectrum_ex, logwave, velscale = util.log_rebin(linwave[[0,-1]], data[:,50,50])
 
-	hdu_new = fits.PrimaryHDU(data=data)
-	for key in new_head:
-		hdu_new.header.append(key, new_head[key])
-	hdu_new.writeto(f'/Users/jotter/highres_psbs/ngc1266_MUSE/output/fitsimages/n1266_ppxf_stellarcontsub_{runID}.fits', overwrite=True)
+	lin_cube = np.full(data.shape, np.nan)
+	#undo the log rebin
+	for i in range(data.shape[1]):
+		for j in range(data.shape[2]):
+			log_spectrum = data[:,i,j]
+			linwave_new, unlog_spectrum = custom_util.delog_rebin(np.exp(logwave), log_spectrum, linwave)
+			lin_cube[:,i,j] = unlog_spectrum
+
+
+	hdu_filler = fits.PrimaryHDU()
+	hdu_data = fits.ImageHDU(data=lin_cube)
+	hdu_err = fits.ImageHDU(data=error)
+	
+	for key in h1:
+		hdu_data.header[key] = h1[key]
+		hdu_err.header[key] = h1[key]
+
+	hdulist = fits.HDUList([hdu_filler, hdu_data, hdu_err])
+	hdulist.writeto(f'/Users/jotter/highres_psbs/ngc1266_MUSE/output/fitsimages/n1266_ppxf_stellarcontsub_{runID}_lin.fits', overwrite=True)
 
 
 	
@@ -1148,7 +1164,7 @@ cube_path = "../ngc1266_data/MUSE/ADP.2019-02-25T15 20 26.375.fits"
 #run_id_gas = 'Jul24_width'
 
 run_id_stellar = 'Oct25'
-run_stellar_fit(run_id_stellar, cube_path, prev_vmap_path=None, plot_every=0)
+#run_stellar_fit(run_id_stellar, cube_path, prev_vmap_path=None, plot_every=0)
 np_to_fits('/Users/jotter/highres_psbs/ngc1266_MUSE/output/n1266_ppxf_stellarcontsub_Oct25.npy', run_id_stellar)
 
 
